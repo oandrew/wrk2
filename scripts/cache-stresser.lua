@@ -54,7 +54,16 @@ function init(args)
                                     nil, "missing or unsupported  protocol")
         local host  = xtract( args[i], "^http[s]?://([^/:]+)[:/]?.*",
                                                         nil, "missing host")
-        local port  = xtract(args[i], "^http[s]?://[^/:]+:(%d+).*", 80)
+        if proto == "http" then
+            def_port=80
+        else if proto == "https" then
+                def_port=443
+            else
+                print(string.format("Unsupported protocol '%s'",proto))
+                os.exit(1)
+            end
+        end
+        local port  = xtract(args[i], "^http[s]?://[^/:]+:(%d+).*", def_port)
         local ip = xtract(args[i], "^http[s]?://[^/]+/([0-9.]+)/.*",
                                             nil, "missing cache server IP")
         local path  = xtract(args[i], "^http[s]?://[^/]+/[0-9.]+(/.*)","/")
