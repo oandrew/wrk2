@@ -1,3 +1,9 @@
+# NOTE
+
+This is an experimental branch of wrk2 which makes wrk2 usable for
+stressing CDN caches. More specifically, processing the HTTP response
+body has been removed (the body is read and then discarded).
+
 # wrk2
 [![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/giltene/wrk2?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
