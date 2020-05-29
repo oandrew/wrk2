@@ -438,8 +438,8 @@ static int header_value(http_parser *parser, const char *at, size_t len) {
 }
 
 static int response_body(http_parser *parser, const char *at, size_t len) {
-    connection *c = parser->data;
-    buffer_append(&c->body, at, len);
+    // connection *c = parser->data;
+    // buffer_append(&c->body, at, len);
     return 0;
 }
 
@@ -509,7 +509,7 @@ static int response_complete(http_parser *parser) {
 
     if (c->headers.buffer) {
         *c->headers.cursor++ = '\0';
-        script_response(thread->L, status, &c->headers, &c->body);
+        script_response(thread->L, status, &c->headers);
         c->state = FIELD;
     }
 
