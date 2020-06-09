@@ -21,6 +21,7 @@ static struct config {
     bool     u_latency;
     bool     dynamic;
     bool     record_all_responses;
+    bool     no_script_response_body;
     char    *host;
     char    *script;
     SSL_CTX *ctx;
@@ -57,6 +58,10 @@ static void usage() {
            "    -t, --threads     <N>  Number of threads to use   \n"
            "                                                      \n"
            "    -s, --script      <S>  Load Lua script file       \n"
+           "    -N, --lua-dont-pass-body \n"
+           "                           Do not pass HTTP body to LUA script\n"
+           "                           (improves performance with large\n"
+           "                            response bodies)\n"
            "    -H, --header      <H>  Add header to request      \n"
            "    -L  --latency          Print latency statistics   \n"
            "    -U  --u_latency        Print uncorrected latency statistics\n"
@@ -438,6 +443,8 @@ static int header_value(http_parser *parser, const char *at, size_t len) {
 }
 
 static int response_body(http_parser *parser, const char *at, size_t len) {
+    if (cfg.no_script_response_body)
+        return 0;
     connection *c = parser->data;
     buffer_append(&c->body, at, len);
     return 0;
@@ -714,12 +721,13 @@ static struct option longopts[] = {
     { "threads",        required_argument, NULL, 't' },
     { "script",         required_argument, NULL, 's' },
     { "header",         required_argument, NULL, 'H' },
-    { "latency",        no_argument,       NULL, 'L' },
-    { "u_latency",      no_argument,       NULL, 'U' },
-    { "batch_latency",  no_argument,       NULL, 'B' },
+    { "latency",             no_argument,  NULL, 'L' },
+    { "u_latency",           no_argument,  NULL, 'U' },
+    { "batch_latency",       no_argument,  NULL, 'B' },
+    { "lua-dont-pass-body",  no_argument,  NULL, 'N' },
     { "timeout",        required_argument, NULL, 'T' },
-    { "help",           no_argument,       NULL, 'h' },
-    { "version",        no_argument,       NULL, 'v' },
+    { "help",                no_argument,  NULL, 'h' },
+    { "version",             no_argument,  NULL, 'v' },
     { "rate",           required_argument, NULL, 'R' },
     { NULL,             0,                 NULL,  0  }
 };
@@ -734,8 +742,9 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
     cfg->timeout     = SOCKET_TIMEOUT_MS;
     cfg->rate        = 0;
     cfg->record_all_responses = true;
+    cfg->no_script_response_body = false;
 
-    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:R:LUBrv?", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:R:LUBNrv?", longopts, NULL)) != -1) {
         switch (c) {
             case 't':
                 if (scan_metric(optarg, &cfg->threads)) return -1;
@@ -757,6 +766,9 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
                 break;
             case 'B':
                 cfg->record_all_responses = false;
+                break;
+            case 'N':
+                cfg->no_script_response_body = true;
                 break;
             case 'U':
                 cfg->latency = true;
