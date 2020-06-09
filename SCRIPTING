@@ -39,7 +39,9 @@ Overview
     global setup    -- called during thread setup
     global init     -- called when the thread is starting
     global request  -- called to generate the HTTP request
-    global response -- called with HTTP response header
+    global response -- called with HTTP response header and body
+                       (body does not contain actual response data if
+                         the command line option --lua-dont-pass-body is used)
     global done     -- called with results of run
 
 Setup
@@ -65,7 +67,7 @@ Running
 
   function init(args)
   function request()
-  function response(status, headers)
+  function response(status, headers, body)
 
   The running phase begins with a single call to init(), followed by
   a call to request() and response() for each request cycle.
@@ -81,6 +83,9 @@ Running
   response() is called with the HTTP response status and headers.
   Parsing the headers is expensive, so if the response global is
   nil after the call to init() wrk will ignore the headers and body.
+  Using wrk's --lua-dont-pass-body command line option will cause a "dummy"
+  body to be passed instead of the actual body. The option is useful for
+  benchmarking endpoints which pass large response bodies.
 
 Done
 

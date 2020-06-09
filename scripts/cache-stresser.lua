@@ -48,7 +48,7 @@ function init(args)
 
     -- parse command line URLs and prepare requests
     for i=0, #args, 1 do
-        -- note that URL parsing does not support user/pass as 
+        -- note that URL parsing does not support user/pass as
         -- wrk2 does not support auth
         local proto = xtract(args[i], "^(http[s]?)://.*",
                                     nil, "missing or unsupported  protocol")
@@ -112,7 +112,7 @@ end
 
 
 function response(status, headers)
-    -- add current index to string of endpointsi calle 
+    -- add current index to string of endpoints called
     local c = ","
     if called_idxs == "" then c="" end
     called_idxs = string.format("%s%s%s",called_idxs,c,idx)
@@ -135,7 +135,7 @@ end
 function done(summary, latency, requests)
     print(string.format("Total Requests: %d", summary.requests))
     print(string.format("HTTP errors: %d", summary.errors.status))
-    print(string.format("Requests timed out: %d", summary.errors.timeout)) 
+    print(string.format("Requests timed out: %d", summary.errors.timeout))
     print(string.format("Bytes received: %d", summary.bytes))
     print(string.format("Socket connect errors: %d", summary.errors.connect))
     print(string.format("Socket read errors: %d", summary.errors.read))

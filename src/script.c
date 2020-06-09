@@ -157,7 +157,7 @@ void script_request(lua_State *L, char **buf, size_t *len) {
     lua_pop(L, pop);
 }
 
-void script_response(lua_State *L, int status, buffer *headers) {
+void script_response(lua_State *L, int status, buffer *headers, buffer *body) {
     lua_getglobal(L, "response");
     lua_pushinteger(L, status);
     lua_newtable(L);
@@ -168,9 +168,11 @@ void script_response(lua_State *L, int status, buffer *headers) {
         lua_rawset(L, -3);
     }
 
-    lua_call(L, 2, 0);
+    lua_pushlstring(L, body->buffer, body->cursor - body->buffer);
+    lua_call(L, 3, 0);
 
     buffer_reset(headers);
+    buffer_reset(body);
 }
 
 bool script_is_function(lua_State *L, char *name) {
