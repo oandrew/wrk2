@@ -1,0 +1,100 @@
+#!/bin/ash
+#
+# Wrapper script around wrk service mesh benchmark
+#
+
+conn=10
+rps=10
+dur=60
+pgw="http://pushgateway.monitoring:9091/metrics"
+
+[ -z "$1" -o "help" = "$1" -o "-h" = "$1" -o "--help" = "$1" ] && {
+    echo "Usage:"
+    echo "  docker run -ti quay.io/kinvolk/wrk2-srvmesh-bench \\" 
+    echo "        [-c <num-of-concurrent-connections>] \\"
+    echo "        [-r <num-of-requests-per-second>] \\"
+    echo "        [-d <duration>] \\"
+    echo "        [-p <push-gateway>] \\"
+    echo "        [-T ] \\"
+    echo "     http[s]://>service-1>/<endpoint-1> \\"
+    echo "     http[s]://>service-1>/<endpoint-2> \\"
+    echo "     http[s]://>service-2>/<endpoint-1> \\"
+    echo "     http[s]://>service-2>/<endpoint-2> \\"
+    echo "        ..."
+    echo
+    echo " -c <connections> - Number of concurrent connections. Default: $conn"
+    echo " -r <rps> - Target rate of requests per second. Default: $rps"
+    echo " -d <duration> - Test duration in seconds. Default: $dur"
+    echo " -p <push-gateway> - URL of prometheus push gateway. Default: $pgw"
+    echo "                     Use 'stdout' to just print to standard output."
+    echo " -T - Report individual connections' stats during run. Default: off."
+    echo
+    exit
+}
+
+servers=""
+per_thread_stats=0
+
+i=1; next=""
+for arg do
+    [ "$arg" = "-c" ] &&  { next="conn"; continue; }
+    [ "$arg" = "-r" ] &&  { next="rps"; continue; }
+    [ "$arg" = "-d" ] &&  { next="dur"; continue; }
+    [ "$arg" = "-p" ] &&  { next="pgw"; continue; }
+    [ "$arg" = "-T" ] &&  { [ -n "$next" ] && { echo "$next: Missing argument";
+                                                exit 1; }
+                            per_thread_stats=1; continue; }
+
+    [ -n "$next" ] && { eval $next="$arg"; next=""; continue; }
+
+    servers="$servers $arg"
+done
+
+if [ "$pgw" = "stdout" ] ; then
+    curl_cmd="cat -"
+else
+    curl_cmd="curl --data-binary @- $pgw"
+fi
+
+cat << EOF | $curl_cmd
+# TYPE wrk2_benchmark_requests gauge
+# TYPE wrk2_benchmark_responses gauge
+# TYPE wrk2_benchmark_average_rps gauge
+# TYPE wrk2_benchmark_current_rps gauge
+EOF
+
+echo
+echo "Running stresser with:"
+echo "   conn: $conn"
+echo "   rps: $rps"
+echo "   duration: $dur"
+echo "   prometheus push-gateway: $pgw"
+echo "   servers: $servers"
+echo
+
+sleep 1
+
+unbuffer /usr/local/bin/wrk \
+              -s /usr/local/bin/multiple-endpoints-prometheus-metrics.lua \
+              --lua-dont-pass-body \
+              -L -R "$rps" -c "$conn" -t "$conn" -d "$dur" \
+              $servers \
+    | awk -v threads="$conn" -v per_thread_stats="$per_thread_stats" '
+           /^wrk2_benchmark_/ {
+                if (0 < per_thread_stats)
+                    print $0
+
+                c=c+1
+                if (c >= threads * 4) {
+                    print "wrk2_benchmark_requests{\"sum\"} "     req
+                    print "wrk2_benchmark_responses{\"sum\"} "    resp
+                    print "wrk2_benchmark_average_rps{\"sum\"} "  avg
+                    print "wrk2_benchmark_current_rps{\"sum\"} "  curr
+                    c=0; req=0; avg=0; resp=0; curr=0
+                }
+            }
+           /^wrk2_benchmark_requests/    { req  = req  + $2 }
+           /^wrk2_benchmark_responses/   { resp = resp + $2 }
+           /^wrk2_benchmark_average_rps/ { avg  = avg  + $2 }
+           /^wrk2_benchmark_current_rps/ { curr = curr + $2 }
+        '

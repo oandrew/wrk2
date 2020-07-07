@@ -1,5 +1,8 @@
 -- This script extends wrk2 to handle multiple server addresses
 -- as well as multiple paths (endpoints) per server
+--
+-- Intermediate status output is added in a format suitable for consumption via
+-- the Prometheus push gateway
 
 require "socket"
 
@@ -56,10 +59,12 @@ function init(args)
     -- Thread globals used by request(), response()
     addrs = {}
     idx = 0
-    call_count=0
+    responses=0
+    requests=0
     start_msec = micro_ts()
     prev_msec = start_msec
     prev_call_count = 0
+    print_report=0
     math.randomseed(start_msec)
 
     -- table of lists; per entry:
@@ -127,9 +132,13 @@ end
 
 function request()
     local ret = endpoints[idx][5]
+    requests = requests + 1
     return ret
 end
 
+function print_metric(mname, value)
+    print(string.format("\nwrk2_benchmark_%s{label=\"thread-%s\"} %d",mname,id,value))
+end
 
 function response(status, headers)
     -- add current index to string of endpoints called
@@ -148,17 +157,20 @@ function response(status, headers)
         wrk.thread.addr = endpoints[idx][2]
     end
 
-    call_count = call_count + 1
+    responses = responses + 1
     now_msec = micro_ts()
     if ts_diff(prev_msec, now_msec) > report_every * 1000 then
         diff_msec = ts_diff(prev_msec, now_msec)
         sdiff_msec = ts_diff(start_msec, now_msec)
-        print(string.format(
-                '{"id":%d,"ts":%d,"responses":%d,"avg_thrd_rps":%f,"curr_thrd_rps":%f}',
-                            id, sdiff_msec, call_count, call_count / (sdiff_msec / 1000),
-                        (call_count - prev_call_count) / (diff_msec / 1000)))
+
+        print_metric("requests", requests)
+        print_metric("responses", responses)
+        print_metric("average_rps", responses / (sdiff_msec / 1000))
+        print_metric("current_rps",
+                            (responses - prev_call_count) / (diff_msec / 1000))
+
         prev_msec = now_msec
-        prev_call_count = call_count
+        prev_call_count = responses
     end
 end
 
