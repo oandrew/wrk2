@@ -52,13 +52,26 @@ function xtract(str, match, default, err_msg)
     return ret
 end
 
+function print_metric(mname, value)
+    print(string.format("wrk2_benchmark_%s{label=\"thread-%s\"} %d",mname,id,value))
+end
+
 function init(args)
     -- Thread globals used by done()
     called_idxs = ""
     urls = ""
-    -- Thread globals used by request(), response()
+    -- URL randomiser variables
+    --   Thread globals used by request(), response()
     addrs = {}
     idx = 0
+    --   table of lists; per entry:
+    --     proto, host, hostaddr, port, path + params
+    endpoints={}
+    --    table of prepared HTTP requests for endpoints above
+    reqs={}
+
+    -- reporting variables
+    report_every=1 --seconds
     responses=0
     requests=0
     start_msec = micro_ts()
@@ -67,11 +80,12 @@ function init(args)
     print_report=0
     math.randomseed(start_msec)
 
-    -- table of lists; per entry:
-    --   proto, host, hostaddr, port, path + params
-    endpoints={}
-    -- tablre of prepared HTTP requests for endpoints above
-    reqs={}
+    -- reset counters
+    print_metric("requests", 0)
+    print_metric("responses", 0)
+    print_metric("average_rps", 0)
+    print_metric("current_rps", 0)
+
 
     -- parse command line URLs and prepare requests
     for i=0, #args, 1 do
@@ -136,13 +150,8 @@ function request()
     return ret
 end
 
-function print_metric(mname, value)
-    print(string.format("\nwrk2_benchmark_%s{label=\"thread-%s\"} %d",mname,id,value))
-end
-
 function response(status, headers)
     -- add current index to string of endpoints called
-    local report_every=5 --seconds
     local c = ","
     if called_idxs == "" then c="" end
     called_idxs = string.format("%s%s%s",called_idxs,c,idx)

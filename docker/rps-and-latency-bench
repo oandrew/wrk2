@@ -6,7 +6,7 @@
 conn=10
 rps=10
 dur=60
-pgw="http://pushgateway.monitoring:9091/metrics"
+pgw="http://pushgateway.monitoring:9091/metrics/job/wrk2_benchmark/instance/test_run"
 
 [ -z "$1" -o "help" = "$1" -o "-h" = "$1" -o "--help" = "$1" ] && {
     echo "Usage:"
@@ -51,17 +51,23 @@ for arg do
 done
 
 if [ "$pgw" = "stdout" ] ; then
-    curl_cmd="cat -"
+    curl_pgw="cat -"
 else
-    curl_cmd="curl --data-binary @- $pgw"
+    curl_pgw="curl --data-binary @- $pgw"
 fi
-export curl_cmd
+export curl_pgw
+
+duration_mul=$(echo "$dur" \
+                   | awk '/s$/{print "1"} /m$/{print "60"} /h$/{print "3600"}')
+[ -z "$duration_mul" ] && duration_mul=1
+duration_val=$(echo "$dur" | sed 's/[^0-9]\+//g')
+duration_s=$(( $duration_val * $duration_mul ))
 
 echo
 echo "Running stresser with:"
 echo "   conn: $conn"
 echo "   rps: $rps"
-echo "   duration: $dur"
+echo "   duration: $dur ($duration_s s)"
 echo "   prometheus push-gateway: $pgw"
 echo "   servers: $servers"
 echo
@@ -73,59 +79,89 @@ unbuffer /usr/local/bin/wrk \
               --lua-dont-pass-body \
               -L -R "$rps" -c "$conn" -t "$conn" -d "$dur" \
               $servers \
+    | unbuffer -p tee stats \
     | awk -v threads="$conn" \
           -v per_thread_stats="$per_thread_stats" \
-          -v rrps="$rps" '
-           /^wrk2_benchmark_/ {
-                if (0 < per_thread_stats)
-                    per_thread_info = per_thread_info $0 "\n"
+          -v rrps="$rps"  \
+          -v duration="$duration_s" '
 
-                c=c+1
+           BEGIN{
+                start_ts=systime()
+                system("cat << EOF | $curl_pgw\n" \
+                   "# TYPE wrk2_benchmark_progress counter\n" \
+                   "wrk2_benchmark_progress " 0 "\n" \
+                   "EOF")
+           }
+
+           /^wrk2_benchmark_/ {
+                # due to multithreading there can be more than one value per line
+                num_values = gsub(/ [0-9]+/," &\n")
+                if (0 < per_thread_stats) {
+                    lines = gensub(/[^0-9]$/,"","g")
+                    per_thread_info = per_thread_info lines
+                }
+
+                c=c+num_values
                 if (c >= threads * 4) {
-                    system("cat << EOF | $curl_cmd\n" \
-                       "# TYPE wrk2_benchmark_requests gauge\n" \
-                       "# TYPE wrk2_benchmark_responses gauge\n" \
+                    runtime=systime() - start_ts
+                    cmd = "cat << EOF | $curl_pgw\n" \
+                       "# TYPE wrk2_benchmark_requests counter\n" \
+                       "# TYPE wrk2_benchmark_responses counter\n" \
                        "# TYPE wrk2_benchmark_average_rps gauge\n" \
+                       "# TYPE wrk2_benchmark_run_average_rps gauge\n" \
                        "# TYPE wrk2_benchmark_current_rps gauge\n" \
-                       "# TYPE wrk2_benchmark_requested_rps gauge\n" \
+                       "# TYPE wrk2_benchmark_run_requested_rps gauge\n" \
+                       "# TYPE wrk2_benchmark_progress counter\n" \
                        per_thread_info \
                        "wrk2_benchmark_requests{label=\"sum\"} " req "\n" \
                        "wrk2_benchmark_responses{label=\"sum\"} " resp "\n" \
                        "wrk2_benchmark_average_rps{label=\"sum\"} " avg "\n" \
                        "wrk2_benchmark_current_rps{label=\"sum\"} " curr "\n" \
-                       "wrk2_benchmark_requested_rps{label=\"sum\"} " rrps "\n" \
-                       "EOF")
+                       "wrk2_benchmark_run_average_rps{label=\"sum\"} " avg "\n" \
+                       "wrk2_benchmark_run_requested_rps{label=\"sum\"} " rrps "\n" \
+                       "wrk2_benchmark_progress " runtime * 100 / duration "\n" \
+                       "EOF"
+                    print "-----------"
+                    print "CMD: " cmd
+                    print "-----------"
+                    system(cmd)
                     c=0; req=0; avg=0; resp=0; curr=0; per_thread_info=""
                 }
             }
+
            /^wrk2_benchmark_requests/    { req  = req  + $2 }
            /^wrk2_benchmark_responses/   { resp = resp + $2 }
            /^wrk2_benchmark_average_rps/ { avg  = avg  + $2 }
            /^wrk2_benchmark_current_rps/ { curr = curr + $2 }
         '
 
-# set all gauges to 0 after benchmark concluded
+# set sum gauges to 0, progress to 100
 per_thread_info=""
 if [ 0 -lt $per_thread_stats ] ; then
     for i in $(seq $conn); do
-        per_thread_info="wrk2_benchmark_requests{label=\"thread-${i+1}\"} 0\n$per_thread_info"
-        per_thread_info="wrk2_benchmark_responses{label=\"thread-${i+1}\"} 0\n$per_thread_info"
-        per_thread_info="wrk2_benchmark_average_rps{label=\"thread-${i+1}\"} 0\n$per_thread_info"
-        per_thread_info="wrk2_benchmark_current_rps{label=\"thread-${i+1}\"} 0\n$per_thread_info"
+        per_thread_info="wrk2_benchmark_requests{label=\"thread-${i}\"} 0\n$per_thread_info"
+        per_thread_info="wrk2_benchmark_responses{label=\"thread-${i}\"} 0\n$per_thread_info"
+        per_thread_info="wrk2_benchmark_average_rps{label=\"thread-${i}\"} 0\n$per_thread_info"
+        per_thread_info="wrk2_benchmark_current_rps{label=\"thread-${i}\"} 0\n$per_thread_info"
     done
 fi
 
-cat << EOF | $curl_cmd
-# TYPE wrk2_benchmark_requests gauge
-# TYPE wrk2_benchmark_responses gauge
+cat << EOF | $curl_pgw
+# TYPE wrk2_benchmark_progress counter
+# TYPE wrk2_benchmark_requests counter
+# TYPE wrk2_benchmark_responses counter
 # TYPE wrk2_benchmark_average_rps gauge
 # TYPE wrk2_benchmark_current_rps gauge
-# TYPE wrk2_benchmark_requested_rps gauge
 $(echo -e $per_thread_info)
-wrk2_benchmark_requests{label="sum"} 0
-wrk2_benchmark_responses{label="sum"} 0
 wrk2_benchmark_average_rps{label="sum"} 0
 wrk2_benchmark_current_rps{label="sum"} 0
-wrk2_benchmark_requested_rps{label="sum"} 0
+wrk2_benchmark_progress 100
+EOF
+
+grep -A 99999 'Latency Distribution' stats
+
+cat << EOF | $curl_pgw
+# TYPE wrk2_benchmark_progress counter
+wrk2_benchmark_progress 100
 EOF
 
