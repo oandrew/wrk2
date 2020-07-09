@@ -53,7 +53,7 @@ function xtract(str, match, default, err_msg)
 end
 
 function print_metric(mname, value)
-    print(string.format("wrk2_benchmark_%s{label=\"thread-%s\"} %d",mname,id,value))
+    print(string.format("wrk2_benchmark_%s{thread=\"thread-%s\"} %d",mname,id,value))
 end
 
 function init(args)
@@ -131,6 +131,8 @@ function init(args)
         endpoints[i][4] = path
         endpoints[i][5] = string.format(
                     "GET %s HTTP/1.1\r\nHost:%s:%s\r\n\r\n", path, host, port)
+        endpoints[i][6] = string.format(host) -- for reconnect comparison
+                                              -- (regex objects aren't comparable)
         if urls == "" then
             urls = args[i]
         else
@@ -159,9 +161,9 @@ function response(status, headers)
     -- Pick a new random endpoint for the next request
     -- Also, update the thread's remote server addr if endpoint
     -- is on a different server.
-    local prev_srv = endpoints[idx][2]
+    local prev_srv = endpoints[idx][6]
     idx = math.random(0, #endpoints)
-    if prev_srv ~= endpoints[idx][2] then
+    if prev_srv ~= endpoints[idx][6] then
         -- Re-setting the thread's server address forces a reconnect
         wrk.thread.addr = endpoints[idx][2]
     end

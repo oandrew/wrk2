@@ -1,0 +1,302 @@
+#!/bin/ash
+#
+# Wrapper script around wrk service mesh benchmark
+#  for data export to Prometheus push GW
+#
+
+conn=10
+rps=10
+dur=60
+pgw="http://pushgateway.monitoring:9091/metrics/job/wrk2_benchmark/instance/test_run"
+
+[ -z "$1" -o "help" = "$1" -o "-h" = "$1" -o "--help" = "$1" ] && {
+    echo "Usage:"
+    echo "  docker run -ti quay.io/kinvolk/wrk2-srvmesh-bench \\" 
+    echo "        [-c <num-of-concurrent-connections>] \\"
+    echo "        [-r <num-of-requests-per-second>] \\"
+    echo "        [-d <duration>] \\"
+    echo "        [-p <push-gateway>] \\"
+    echo "     http[s]://>service-1>/<endpoint-1> \\"
+    echo "     http[s]://>service-1>/<endpoint-2> \\"
+    echo "     http[s]://>service-2>/<endpoint-1> \\"
+    echo "     http[s]://>service-2>/<endpoint-2> \\"
+    echo "        ..."
+    echo
+    echo " -c <connections> - Number of concurrent connections. Default: $conn"
+    echo " -r <rps> - Target rate of requests per second. Default: $rps"
+    echo " -d <duration> - Test duration in seconds. Default: $dur"
+    echo " -p <push-gateway> - URL of prometheus push gateway. Default: $pgw"
+    echo "                     Use 'stdout' to just print to standard output."
+    echo
+    exit
+}
+
+servers=""
+
+i=1; next=""
+for arg do
+    [ "$arg" = "-c" ] &&  { next="conn"; continue; }
+    [ "$arg" = "-r" ] &&  { next="rps"; continue; }
+    [ "$arg" = "-d" ] &&  { next="dur"; continue; }
+    [ "$arg" = "-p" ] &&  { next="pgw"; continue; }
+
+    [ -n "$next" ] && { eval $next="$arg"; next=""; continue; }
+
+    servers="$servers $arg"
+done
+
+if [ "$pgw" = "stdout" ] ; then
+    curl_pgw="cat -"
+else
+    curl_pgw="curl --data-binary @- $pgw"
+fi
+export curl_pgw
+
+duration_mul=$(echo "$dur" \
+                   | awk '/s$/{print "1"} /m$/{print "60"} /h$/{print "3600"}')
+[ -z "$duration_mul" ] && duration_mul=1
+duration_val=$(echo "$dur" | sed 's/[^0-9]\+//g')
+duration_s=$(( $duration_val * $duration_mul ))
+
+echo
+echo "Running stresser with:"
+echo "   conn: $conn"
+echo "   rps: $rps"
+echo "   duration: $dur ($duration_s s)"
+echo "   prometheus push-gateway: $pgw"
+echo "   servers: $servers"
+echo
+
+sleep 1
+
+unbuffer /usr/local/bin/wrk \
+              -s /usr/local/bin/multiple-endpoints-prometheus-metrics.lua \
+              --lua-dont-pass-body \
+              -L -R "$rps" -c "$conn" -t "$conn" -d "$dur" \
+              $servers \
+    | unbuffer -p tee stats \
+    | gawk -v threads="$conn" \
+          -v rrps="$rps"  \
+          -v duration="$duration_s" '
+
+          function push_to_prometheus(data, start_ts,     \
+                                        cmd,id,val,metric,runtime,progress) {
+                cmd = "cat << EOF | $curl_pgw\n" \
+                   "# TYPE wrk2_benchmark_requests counter\n" \
+                   "# TYPE wrk2_benchmark_responses counter\n" \
+                   "# TYPE wrk2_benchmark_average_rps gauge\n" \
+                   "# TYPE wrk2_benchmark_current_rps gauge\n" \
+                   "# TYPE wrk2_benchmark_progress counter\n" \
+                   "# TYPE wrk2_benchmark_requested_rps gauge\n"
+                   "# TYPE wrk2_benchmark_run_requested_rps gauge\n"
+
+                for (id in data) {
+                    for (metric in data[id]) {
+                        val = data[id][metric]
+                        cmd = cmd metric "{thread=\"" id "\"} " val "\n"
+                    }
+                }
+
+                runtime=systime() - start_ts
+                progress = runtime * 100 / duration 
+                if (progress > 100)
+                    progress=100
+
+                cmd = cmd \
+                   "wrk2_benchmark_progress " progress "\n" \
+                   "wrk2_benchmark_requested_rps " rrps "\n" \
+                   "wrk2_benchmark_run_requested_rps " rrps "\n" \
+                   "EOF"
+ 
+                system(cmd)
+
+                printf("\rProgress: %3d%% : %d / %d ",
+                                                  progress, runtime, duration)
+                fflush("/dev/stdout")
+
+          }
+
+           BEGIN {
+                start_ts = systime()
+                system("cat << EOF | $curl_pgw\n" \
+                   "# TYPE wrk2_benchmark_progress counter\n" \
+                   "wrk2_benchmark_progress " 0 "\n" \
+                   "EOF")
+           }
+
+           /^wrk2_benchmark_/ {
+                # gather per-thread stats data
+                # due to multithreading there can be more than one value per line
+                lines = gensub(/[^0-9]$/,"","g")
+                lines = gensub(/(wrk2_benchmark_[a-z_]+ [0-9]+)/,"\\1\n", "g", lines)
+                split(lines, alines, "\n")
+                for (line in alines) {
+                    line = alines[line]
+                    if (line == "")
+                            continue
+                    t_id = gensub(/.*thread="([^"]+)".*/,"\\1","g",line)
+                    metric = gensub(/(wrk2_benchmark_[a-z_]+){.*/,"\\1","g",line)
+                    val = gensub(/.* ([0-9.]+)$/,"\\1","g",line)
+
+                    thread_data[t_id][metric] = val
+                    if (thread_data_seen[t_id][metric]) {
+                        # prevent duplicate entries in pushes; send data
+                        push_to_prometheus(thread_data, start_ts)
+                        delete thread_data_seen
+                        split("", thread_data_seen)
+                   } else {
+                        thread_data_seen[t_id][metric] = 1
+                   }
+                }
+
+                next
+            }
+
+            { 
+                if (match($0, /[^[:space:]]+/)) 
+                    print $0 
+            }
+
+            END {
+                push_to_prometheus(thread_data, start_ts)
+            }
+        '
+
+echo ""
+
+# set sum gauges to 0, progress to 100
+per_thread_info=""
+for i in $(seq $conn); do
+    per_thread_info="wrk2_benchmark_requests{label=\"thread-${i}\"} 0\n$per_thread_info"
+    per_thread_info="wrk2_benchmark_responses{label=\"thread-${i}\"} 0\n$per_thread_info"
+    per_thread_info="wrk2_benchmark_average_rps{label=\"thread-${i}\"} 0\n$per_thread_info"
+    per_thread_info="wrk2_benchmark_current_rps{label=\"thread-${i}\"} 0\n$per_thread_info"
+done
+
+cat << EOF | $curl_pgw
+# TYPE wrk2_benchmark_progress counter
+# TYPE wrk2_benchmark_requests counter
+# TYPE wrk2_benchmark_responses counter
+# TYPE wrk2_benchmark_average_rps gauge
+# TYPE wrk2_benchmark_current_rps gauge
+# TYPE wrk2_benchmark_requested_rps gauge
+$(echo -e $per_thread_info)
+wrk2_benchmark_requested_rps 0
+wrk2_benchmark_progress 100
+EOF
+
+# send final wrk2 stats
+gawk '
+    # ---------------------------
+
+    # simple latency spectrum
+    /^[ 0-9.]+%/ {
+        if (latency) {
+            percentile = gensub(/%.*/, "", "g", $1) / 100
+            val  = gensub(/([0-9.]+).*/,"\\1","g",$2)
+            unit = gensub(/[0-9.]+(.*)/,"\\1","g",$2)
+
+            mul = 1
+            if (unit == "us") mul=0.0001
+            if (unit == "s")  mul=1000
+            if (unit == "m")  mul=60000
+
+            print "wrk2_benchmark_latency_ms{p=\"" percentile "\"} " val*mul
+        }
+    }
+
+    /Latency Distribution/ {
+        print "# TYPE wrk2_benchmark_latency_ms counter"
+        latency=1
+    }
+
+    # detailed latency spectrum
+    /^#/ { detailed=0 }
+
+    {
+        if (detailed) {
+            detailed = detailed + 1
+            if (detailed >= 3 && $2 != prev_perc) {
+                print "wrk2_benchmark_latency_detailed_ms{p=\"" $2 "\"} " $1
+                prev_perc=$2
+            }
+        }
+    }
+
+    /Detailed Percentile spectrum:/ {
+        latency=0
+        print "# TYPE wrk2_benchmark_latency_detailed_ms counter"
+        detailed=1
+    }
+
+
+    # overall RPS
+    /Requests\/sec:/ {
+        print "# TYPE wrk2_benchmark_run_rps counter"
+        print "wrk2_benchmark_run_rps " $2
+    }
+
+    # overall requests
+    /Total Requests:/{
+        print "# TYPE wrk2_benchmark_run_requests counter"
+        print "wrk2_benchmark_run_requests " $3
+    }
+
+    # socket error stats - not present if there are no errors
+    #   Socket errors: connect 0, read 25, write 0, timeout 0
+    { s_connect=0; s_read=0; s_write=0; s_timeout=0; }
+    /Socket errors:/ {
+        s_connect = gensub(/,/,"","g",$4)
+        s_read    = gensub(/,/,"","g",$6)
+        s_write   = gensub(/,/,"","g",$8)
+        s_timeout = $10
+    }
+
+    #   HTTP errors: 0
+    /HTTP errors:/ {
+        print "# TYPE wrk2_benchmark_http_errors counter"
+        print "wrk2_benchmark_http_errors " $3
+    }
+
+    #   Requests timed out: 0
+    /Requests timed out:/ {
+        print "# TYPE wrk2_benchmark_requests_timed_out counter"
+        print "wrk2_benchmark_requests_timed_out " $4
+    }
+
+    #   Bytes received: 1519608191
+    /Bytes received:/ {
+        print "# TYPE wrk2_benchmark_bytes_read counter"
+        print "wrk2_benchmark_bytes_read " $3
+    }
+
+    #    http://192.168.1.244/index.txt : 5397500
+    {
+        if (call_count) {
+            print "wrk2_benchmark_url_call_count{url=\"" $1 "\"} " $3
+        }
+    }
+
+    # Call count of URLs
+    /URL call count/ {
+        print "# TYPE wrk2_benchmark_url_call_count counter"
+        call_count=1
+    } 
+    
+    END {
+        print "# TYPE wrk2_benchmark_socket_errors counter"
+        print "wrk2_benchmark_socket_errors{t=\"connect\"} " s_connect
+        print "wrk2_benchmark_socket_errors{t=\"read\"} " s_read
+        print "wrk2_benchmark_socket_errors{t=\"write\"} " s_write
+        print "wrk2_benchmark_socket_errors{t=\"timeout\"} " s_timeout
+    }
+
+    # ---------------------------
+    ' stats \
+ | $curl_pgw
+
+cat << EOF | $curl_pgw
+# TYPE wrk2_benchmark_progress counter
+wrk2_benchmark_progress 100
+EOF
+

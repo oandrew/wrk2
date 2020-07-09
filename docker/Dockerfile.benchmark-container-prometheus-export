@@ -15,7 +15,7 @@ RUN cd wrk2-cache-stresser && \
 FROM alpine
 MAINTAINER Kinvolk
 
-RUN apk add --update --no-cache expect curl \
+RUN apk add --update --no-cache expect curl gawk \
                         so:libcrypto.so.1.1 so:libssl.so.1.1 so:libgcc_s.so.1
 
 COPY --from=builder /usr/src/wrk2-cache-stresser/wrk /usr/local/bin/
@@ -23,6 +23,6 @@ COPY --from=builder /usr/local/lib/lua/ /usr/local/lib/lua/
 COPY --from=builder /usr/local/share/lua/ /usr/local/share/lua/
 COPY --from=builder /usr/src/wrk2-cache-stresser/scripts/multiple-endpoints-prometheus-metrics.lua /usr/local/bin/
 
-COPY ./docker/rps-and-latency-bench /usr/local/bin/
+COPY ./docker/prometheus-export-wrapper /usr/local/bin/
 
-ENTRYPOINT ["/usr/local/bin/rps-and-latency-bench"]
+ENTRYPOINT ["/usr/local/bin/prometheus-export-wrapper"]
