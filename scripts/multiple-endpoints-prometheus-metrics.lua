@@ -52,8 +52,19 @@ function xtract(str, match, default, err_msg)
     return ret
 end
 
-function print_metric(mname, value)
-    print(string.format("wrk2_benchmark_%s{thread=\"thread-%s\"} %d",mname,id,value))
+function prom(mname, value)
+    return string.format(
+                   "wrk2_benchmark_%s{thread=\"thread-%s\"} %d\n",mname,id,value)
+end
+
+function write_metrics(req, resp, avg, curr)
+    w = prom("requests", req) .. prom("responses", resp) 
+    w = w .. prom("average_rps", avg) .. prom("current_rps", curr)
+    f=io.open(string.format("thread-%d_seq-%d.txt", id, write_iter), "w+")
+    f:write(w)
+    f:flush()
+    f:close()
+    write_iter = write_iter + 1
 end
 
 function init(args)
@@ -80,11 +91,9 @@ function init(args)
     print_report=0
     math.randomseed(start_msec)
 
-    -- reset counters
-    print_metric("requests", 0)
-    print_metric("responses", 0)
-    print_metric("average_rps", 0)
-    print_metric("current_rps", 0)
+    -- write first metric - all 0, to reset counters
+    write_iter = 0
+    write_metrics(0,0,0,0)
 
 
     -- parse command line URLs and prepare requests
@@ -174,11 +183,9 @@ function response(status, headers)
         diff_msec = ts_diff(prev_msec, now_msec)
         sdiff_msec = ts_diff(start_msec, now_msec)
 
-        print_metric("requests", requests)
-        print_metric("responses", responses)
-        print_metric("average_rps", responses / (sdiff_msec / 1000))
-        print_metric("current_rps",
-                            (responses - prev_call_count) / (diff_msec / 1000))
+        write_metrics(requests, responses,
+                      responses / (sdiff_msec / 1000),
+                      (responses - prev_call_count) / (diff_msec / 1000))
 
         prev_msec = now_msec
         prev_call_count = responses

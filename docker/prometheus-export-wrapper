@@ -69,99 +69,61 @@ echo
 
 sleep 1
 
+prometheus_pusher() {
+    local num_threads="$1"
+    local req_rps="$2"
+    local duration="$3"
+    local curl_pgw="$4"
+
+    local iter=1
+    local start_ts=$(date +%s)
+
+    while [ ! -f "benchmark-end.txt" ] ; do
+        sleep 0.5
+        mcount=$(ls | grep -cE "thread-[0-9]_seq-${iter}.txt")
+        if [ $mcount -eq $num_threads ]; then
+            now=$(date +%s)
+            runtime=$(($now - $start_ts))
+            progress=$(($runtime * 100 / $duration))
+            [ $progress -gt 100 ] && progress=100
+
+            cat << EOF | $curl_pgw \
+# TYPE wrk2_benchmark_progress counter
+# TYPE wrk2_benchmark_requests counter
+# TYPE wrk2_benchmark_responses counter
+# TYPE wrk2_benchmark_average_rps gauge
+# TYPE wrk2_benchmark_current_rps gauge
+# TYPE wrk2_benchmark_progress counter
+# TYPE wrk2_benchmark_requested_rps gauge
+# TYPE wrk2_benchmark_run_requested_rps gauge
+wrk2_benchmark_progress $progress
+wrk2_benchmark_requested_rps $req_rps
+wrk2_benchmark_run_requested_rps $req_rps
+$(cat thread-*_seq-${iter}.txt)
+EOF
+            echo "Progress: $progress% , ${runtime}s / ${duration}s"
+            rm thread-*_seq-${iter}.txt
+            iter=$(($iter+1))
+        fi
+    done
+
+    echo "All done!"
+}
+
+rm -f thread-*_seq-*.txt "benchmark-end.txt"
+
+prometheus_pusher "$conn" "$rps" "$duration_s" "$curl_pgw" &
+
 unbuffer /usr/local/bin/wrk \
               -s /usr/local/bin/multiple-endpoints-prometheus-metrics.lua \
               --lua-dont-pass-body \
               -L -R "$rps" -c "$conn" -t "$conn" -d "$dur" \
               $servers \
-    | unbuffer -p tee stats \
-    | gawk -v threads="$conn" \
-          -v rrps="$rps"  \
-          -v duration="$duration_s" '
+    | unbuffer -p tee stats
 
-          function push_to_prometheus(data, start_ts,     \
-                                        cmd,id,val,metric,runtime,progress) {
-                cmd = "cat << EOF | $curl_pgw\n" \
-                   "# TYPE wrk2_benchmark_requests counter\n" \
-                   "# TYPE wrk2_benchmark_responses counter\n" \
-                   "# TYPE wrk2_benchmark_average_rps gauge\n" \
-                   "# TYPE wrk2_benchmark_current_rps gauge\n" \
-                   "# TYPE wrk2_benchmark_progress counter\n" \
-                   "# TYPE wrk2_benchmark_requested_rps gauge\n"
-                   "# TYPE wrk2_benchmark_run_requested_rps gauge\n"
-
-                for (id in data) {
-                    for (metric in data[id]) {
-                        val = data[id][metric]
-                        cmd = cmd metric "{thread=\"" id "\"} " val "\n"
-                    }
-                }
-
-                runtime=systime() - start_ts
-                progress = runtime * 100 / duration 
-                if (progress > 100)
-                    progress=100
-
-                cmd = cmd \
-                   "wrk2_benchmark_progress " progress "\n" \
-                   "wrk2_benchmark_requested_rps " rrps "\n" \
-                   "wrk2_benchmark_run_requested_rps " rrps "\n" \
-                   "EOF"
- 
-                system(cmd)
-
-                printf("\rProgress: %3d%% : %d / %d ",
-                                                  progress, runtime, duration)
-                fflush("/dev/stdout")
-
-          }
-
-           BEGIN {
-                start_ts = systime()
-                system("cat << EOF | $curl_pgw\n" \
-                   "# TYPE wrk2_benchmark_progress counter\n" \
-                   "wrk2_benchmark_progress " 0 "\n" \
-                   "EOF")
-           }
-
-           /^wrk2_benchmark_/ {
-                # gather per-thread stats data
-                # due to multithreading there can be more than one value per line
-                lines = gensub(/[^0-9]$/,"","g")
-                lines = gensub(/(wrk2_benchmark_[a-z_]+ [0-9]+)/,"\\1\n", "g", lines)
-                split(lines, alines, "\n")
-                for (line in alines) {
-                    line = alines[line]
-                    if (line == "")
-                            continue
-                    t_id = gensub(/.*thread="([^"]+)".*/,"\\1","g",line)
-                    metric = gensub(/(wrk2_benchmark_[a-z_]+){.*/,"\\1","g",line)
-                    val = gensub(/.* ([0-9.]+)$/,"\\1","g",line)
-
-                    thread_data[t_id][metric] = val
-                    if (thread_data_seen[t_id][metric]) {
-                        # prevent duplicate entries in pushes; send data
-                        push_to_prometheus(thread_data, start_ts)
-                        delete thread_data_seen
-                        split("", thread_data_seen)
-                   } else {
-                        thread_data_seen[t_id][metric] = 1
-                   }
-                }
-
-                next
-            }
-
-            { 
-                if (match($0, /[^[:space:]]+/)) 
-                    print $0 
-            }
-
-            END {
-                push_to_prometheus(thread_data, start_ts)
-            }
-        '
-
+> "benchmark-end.txt"
+sleep 2
+kill %1
 echo ""
 
 # set sum gauges to 0, progress to 100
@@ -186,7 +148,7 @@ wrk2_benchmark_progress 100
 EOF
 
 # send final wrk2 stats
-gawk '
+awk '
     # ---------------------------
 
     # simple latency spectrum
