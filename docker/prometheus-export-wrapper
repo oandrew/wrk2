@@ -75,12 +75,12 @@ prometheus_pusher() {
     local duration="$3"
     local curl_pgw="$4"
 
-    local iter=1
+    local iter=0
     local start_ts=$(date +%s)
 
     while [ ! -f "benchmark-end.txt" ] ; do
         sleep 0.5
-        mcount=$(ls | grep -cE "thread-[0-9]_seq-${iter}.txt")
+        mcount=$(ls -1 | grep -cE "thread-[0-9]+_seq-${iter}.txt")
         if [ $mcount -eq $num_threads ]; then
             now=$(date +%s)
             runtime=$(($now - $start_ts))
@@ -96,9 +96,13 @@ prometheus_pusher() {
 # TYPE wrk2_benchmark_progress counter
 # TYPE wrk2_benchmark_requested_rps gauge
 # TYPE wrk2_benchmark_run_requested_rps gauge
+# TYPE wrk2_benchmark_thread_count counter
+# TYPE wrk2_benchmark_run_thread_count counter
 wrk2_benchmark_progress $progress
 wrk2_benchmark_requested_rps $req_rps
 wrk2_benchmark_run_requested_rps $req_rps
+wrk2_benchmark_thread_count $num_threads
+wrk2_benchmark_run_thread_count $num_threads
 $(cat thread-*_seq-${iter}.txt)
 EOF
             echo "Progress: $progress% , ${runtime}s / ${duration}s"
