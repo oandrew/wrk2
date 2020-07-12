@@ -15,7 +15,7 @@ RUN cd wrk2-cache-stresser && \
 FROM alpine
 MAINTAINER Kinvolk
 
-RUN apk add --update --no-cache expect curl \
+RUN apk add --update --no-cache expect curl util-linux \
                         so:libcrypto.so.1.1 so:libssl.so.1.1 so:libgcc_s.so.1
 
 COPY --from=builder /usr/src/wrk2-cache-stresser/wrk /usr/local/bin/

@@ -69,11 +69,54 @@ echo
 
 sleep 1
 
+# ---------------------
+
+get_cpuinfo() {
+    lscpu \
+        | awk '
+           /Thread\(s\) per core:/ {tps=$4}
+           /Core\(s\) per socket:/ {c=$4}
+           /Socket\(s\):/ {s=$2}
+           END{
+            print "# TYPE wrk2_benchmark_node_cpuinfo gauge"
+            print "wrk2_benchmark_node_cpuinfo{info=\"cores\"} " c*s
+            print "wrk2_benchmark_node_cpuinfo{info=\"threads\"} " c*s*tps
+           }'
+}
+# --
+
+get_cpuclock() {
+    lscpu \
+        | awk '
+            /CPU MHz:/{curr=$3}
+            /CPU max MHz:/{max=$4}
+            END{
+            print "# TYPE wrk2_benchmark_node_cpuclock gauge"
+            print "wrk2_benchmark_node_cpuclock{type=\"current\"} " curr
+            print "wrk2_benchmark_node_cpuclock{type=\"max\"} " max }'
+}
+# --
+
+get_loadavg() {
+    uptime \
+        | awk ' {
+            load=gensub( /.*load average: ([0-9.]+), ([0-9.]+), ([0-9.]+)/ ,"\\1 \\2 \\3", "g")
+            split(load, al, " ")
+            print "# TYPE wrk2_benchmark_node_loadavg gauge"
+            print "wrk2_benchmark_node_loadavg{interval=\"1m\"} " al[1]
+            print "wrk2_benchmark_node_loadavg{interval=\"5m\"} " al[2]
+            print "wrk2_benchmark_node_loadavg{interval=\"15m\"} " al[3] }'
+}
+# --
+
+
 prometheus_pusher() {
     local num_threads="$1"
     local req_rps="$2"
     local duration="$3"
     local curl_pgw="$4"
+
+    local cpuinfo=$(get_cpuinfo)
 
     local iter=0
     local start_ts=$(date +%s)
@@ -81,13 +124,19 @@ prometheus_pusher() {
     while [ ! -f "benchmark-end.txt" ] ; do
         sleep 0.5
         mcount=$(ls -1 | grep -cE "thread-[0-9]+_seq-${iter}.txt")
-        if [ $mcount -eq $num_threads ]; then
-            now=$(date +%s)
-            runtime=$(($now - $start_ts))
-            progress=$(($runtime * 100 / $duration))
-            [ $progress -gt 100 ] && progress=100
 
-            cat << EOF | $curl_pgw \
+        [ $mcount -lt $num_threads ] && continue
+
+        local cpuclock=$(get_cpuclock)
+        local loadavg=$(get_loadavg)
+
+        now=$(date +%s)
+        runtime=$(($now - $start_ts))
+        progress=$(($runtime * 100 / $duration))
+        [ $progress -gt 100 ] && progress=100
+
+
+        cat << EOF | $curl_pgw \
 # TYPE wrk2_benchmark_progress counter
 # TYPE wrk2_benchmark_requests counter
 # TYPE wrk2_benchmark_responses counter
@@ -100,6 +149,9 @@ prometheus_pusher() {
 # TYPE wrk2_benchmark_run_thread_count counter
 # TYPE wrk2_benchmark_duration counter
 # TYPE wrk2_benchmark_run_duration counter
+${cpuinfo}
+${cpuclock}
+${loadavg}
 wrk2_benchmark_progress $progress
 wrk2_benchmark_requested_rps $req_rps
 wrk2_benchmark_run_requested_rps $req_rps
@@ -109,14 +161,15 @@ wrk2_benchmark_duration $duration
 wrk2_benchmark_run_duration $duration
 $(cat thread-*_seq-${iter}.txt)
 EOF
-            echo "Progress: $progress% , ${runtime}s / ${duration}s"
-            rm thread-*_seq-${iter}.txt
-            iter=$(($iter+1))
-        fi
+        echo "Progress: $progress% , ${runtime}s / ${duration}s"
+        rm thread-*_seq-${iter}.txt
+        iter=$(($iter+1))
     done
 
     echo "All done!"
 }
+
+# ---------------------
 
 rm -f thread-*_seq-*.txt "benchmark-end.txt"
 
