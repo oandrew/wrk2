@@ -74,7 +74,7 @@ function init(args)
     -- Thread globals used by done()
     called_idxs = ""
     urls = ""
-    -- URL randomiser variables
+    -- URL list variables
     --   Thread globals used by request(), response()
     addrs = {}
     idx = 0
@@ -157,7 +157,7 @@ function init(args)
 
     urls = urls .. ","
     -- initialize idx, assign req and addr
-    idx = math.random(0, #endpoints)
+    idx = 0 -- math.random(0, #endpoints)
     wrk.thread.addr = endpoints[idx][2]
 end
 
@@ -173,11 +173,12 @@ function response(status, headers)
     if called_idxs == "" then c="" end
     called_idxs = string.format("%s%s%s",called_idxs,c,idx)
 
-    -- Pick a new random endpoint for the next request
+    -- Pick the next endpoint in the list of endpoints, for the next request
     -- Also, update the thread's remote server addr if endpoint
     -- is on a different server.
     local prev_srv = endpoints[idx][6]
-    idx = math.random(0, #endpoints)
+    -- idx = math.random(0, #endpoints)
+    idx = (idx + 1) % #endpoints
     if prev_srv ~= endpoints[idx][6] then
         -- Re-setting the thread's server address forces a reconnect
         wrk.thread.addr = endpoints[idx][2]
