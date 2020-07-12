@@ -92,23 +92,48 @@ get_cpuclock() {
             /CPU max MHz:/{max=$4}
             END{
             print "# TYPE wrk2_benchmark_node_cpuclock gauge"
-            print "wrk2_benchmark_node_cpuclock{type=\"current\"} " curr
-            print "wrk2_benchmark_node_cpuclock{type=\"max\"} " max }'
+            print "wrk2_benchmark_node_cpuclock{kind=\"current\"} " curr
+            print "wrk2_benchmark_node_cpuclock{kind=\"max\"} " max }'
 }
 # --
 
 get_loadavg() {
+    local cores="$1"
+    local threads="$2"
     uptime \
-        | awk ' {
+        | awk -v cores="$cores" -v threads="$threads" ' {
             load=gensub( /.*load average: ([0-9.]+), ([0-9.]+), ([0-9.]+)/ ,"\\1 \\2 \\3", "g")
             split(load, al, " ")
             print "# TYPE wrk2_benchmark_node_loadavg gauge"
-            print "wrk2_benchmark_node_loadavg{interval=\"1m\"} " al[1]
-            print "wrk2_benchmark_node_loadavg{interval=\"5m\"} " al[2]
-            print "wrk2_benchmark_node_loadavg{interval=\"15m\"} " al[3] }'
+            print "wrk2_benchmark_node_loadavg{interval=\"1m\",kind=\"raw\"} " al[1]
+            print "wrk2_benchmark_node_loadavg{interval=\"5m\",kind=\"raw\"} " al[2]
+            print "wrk2_benchmark_node_loadavg{interval=\"15m\",kind=\"raw\"} " al[3]
+            print "wrk2_benchmark_node_loadavg{interval=\"1m\",kind=\"per_core\"} " (al[1] + 0.0) / (cores + 0.0)
+            print "wrk2_benchmark_node_loadavg{interval=\"5m\",kind=\"per_core\"} " (al[2] + 0.0) / (cores + 0.0)
+            print "wrk2_benchmark_node_loadavg{interval=\"15m\",kind=\"per_core\"} " (al[3] + 0.0) / (cores + 0.0)
+            print "wrk2_benchmark_node_loadavg{interval=\"1m\",kind=\"per_thread\"} " (al[1] + 0.0) / (threads + 0.0)
+            print "wrk2_benchmark_node_loadavg{interval=\"5m\",kind=\"per_thread\"} " (al[2] + 0.0) / (threads + 0.0)
+            print "wrk2_benchmark_node_loadavg{interval=\"15m\",kind=\"per_thread\"} " (al[3] + 0.0) / (threads + 0.0) }'
 }
 # --
 
+get_meminfo() {
+    free \
+        | awk ' /^Mem:/{
+            print "# TYPE wrk2_benchmark_node_meminfo gauge"
+            print "wrk2_benchmark_node_meminfo{kind=\"total\"} " $2
+            print "wrk2_benchmark_node_meminfo{kind=\"used\"} " $3
+            print "wrk2_benchmark_node_meminfo{kind=\"free\"} " $4
+            print "wrk2_benchmark_node_meminfo{kind=\"shared\"} " $5
+            print "wrk2_benchmark_node_meminfo{kind=\"cache\"} " $6
+            print "wrk2_benchmark_node_meminfo{kind=\"available\"} " $7 }
+                /^Swap:/{
+            print "# TYPE wrk2_benchmark_node_swapinfo gauge"
+            print "wrk2_benchmark_node_swapinfo{kind=\"total\"} " $2
+            print "wrk2_benchmark_node_swapinfo{kind=\"used\"} " $3
+            print "wrk2_benchmark_node_swapinfo{kind=\"free\"} " $4 }'
+}
+# --
 
 prometheus_pusher() {
     local num_threads="$1"
@@ -117,6 +142,8 @@ prometheus_pusher() {
     local curl_pgw="$4"
 
     local cpuinfo=$(get_cpuinfo)
+    local threads=$(get_cpuinfo | grep '{info="threads"}' | sed 's/.*} //')
+    local cores=$(get_cpuinfo | grep '{info="cores"}' | sed 's/.*} //')
 
     local iter=0
     local start_ts=$(date +%s)
@@ -128,7 +155,8 @@ prometheus_pusher() {
         [ $mcount -lt $num_threads ] && continue
 
         local cpuclock=$(get_cpuclock)
-        local loadavg=$(get_loadavg)
+        local loadavg=$(get_loadavg "$cores" "$threads")
+        local meminfo=$(get_meminfo)
 
         now=$(date +%s)
         runtime=$(($now - $start_ts))
@@ -137,7 +165,11 @@ prometheus_pusher() {
 
 
         cat << EOF | $curl_pgw \
-# TYPE wrk2_benchmark_progress counter
+
+${cpuinfo}
+${cpuclock}
+${loadavg}
+${meminfo}
 # TYPE wrk2_benchmark_requests counter
 # TYPE wrk2_benchmark_responses counter
 # TYPE wrk2_benchmark_average_rps gauge
@@ -149,9 +181,6 @@ prometheus_pusher() {
 # TYPE wrk2_benchmark_run_thread_count counter
 # TYPE wrk2_benchmark_duration counter
 # TYPE wrk2_benchmark_run_duration counter
-${cpuinfo}
-${cpuclock}
-${loadavg}
 wrk2_benchmark_progress $progress
 wrk2_benchmark_requested_rps $req_rps
 wrk2_benchmark_run_requested_rps $req_rps
