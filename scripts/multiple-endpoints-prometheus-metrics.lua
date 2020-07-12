@@ -178,7 +178,7 @@ function response(status, headers)
     -- is on a different server.
     local prev_srv = endpoints[idx][6]
     -- idx = math.random(0, #endpoints)
-    idx = (idx + 1) % #endpoints
+    idx = (idx + 1) % (#endpoints + 1)
     if prev_srv ~= endpoints[idx][6] then
         -- Re-setting the thread's server address forces a reconnect
         wrk.thread.addr = endpoints[idx][2]
