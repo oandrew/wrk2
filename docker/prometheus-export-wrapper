@@ -48,7 +48,7 @@ done
 if [ "$pgw" = "stdout" ] ; then
     curl_pgw="cat -"
 else
-    curl_pgw="curl --data-binary @- $pgw"
+    curl_pgw="curl -s --data-binary @- $pgw"
 fi
 export curl_pgw
 
@@ -98,11 +98,15 @@ prometheus_pusher() {
 # TYPE wrk2_benchmark_run_requested_rps gauge
 # TYPE wrk2_benchmark_thread_count counter
 # TYPE wrk2_benchmark_run_thread_count counter
+# TYPE wrk2_benchmark_duration counter
+# TYPE wrk2_benchmark_run_duration counter
 wrk2_benchmark_progress $progress
 wrk2_benchmark_requested_rps $req_rps
 wrk2_benchmark_run_requested_rps $req_rps
 wrk2_benchmark_thread_count $num_threads
 wrk2_benchmark_run_thread_count $num_threads
+wrk2_benchmark_duration $duration
+wrk2_benchmark_run_duration $duration
 $(cat thread-*_seq-${iter}.txt)
 EOF
             echo "Progress: $progress% , ${runtime}s / ${duration}s"
@@ -146,8 +150,10 @@ cat << EOF | $curl_pgw
 # TYPE wrk2_benchmark_average_rps gauge
 # TYPE wrk2_benchmark_current_rps gauge
 # TYPE wrk2_benchmark_requested_rps gauge
+# TYPE wrk2_benchmark_duration counter
 $(echo -e $per_thread_info)
 wrk2_benchmark_requested_rps 0
+wrk2_benchmark_duration 0
 wrk2_benchmark_progress 100
 EOF
 
