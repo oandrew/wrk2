@@ -174,6 +174,10 @@ ${meminfo}
 # TYPE wrk2_benchmark_responses counter
 # TYPE wrk2_benchmark_average_rps gauge
 # TYPE wrk2_benchmark_current_rps gauge
+# TYPE wrk2_benchmark_run_average_tcp_reconnect_rate gauge
+# TYPE wrk2_benchmark_average_tcp_reconnect_rate gauge
+# TYPE wrk2_benchmark_current_tcp_reconnect_rate gauge
+# TYPE wrk2_benchmark_rgauge
 # TYPE wrk2_benchmark_progress counter
 # TYPE wrk2_benchmark_requested_rps gauge
 # TYPE wrk2_benchmark_run_requested_rps gauge
@@ -223,6 +227,8 @@ for i in $(seq $conn); do
     per_thread_info="wrk2_benchmark_responses{label=\"thread-${i}\"} 0\n$per_thread_info"
     per_thread_info="wrk2_benchmark_average_rps{label=\"thread-${i}\"} 0\n$per_thread_info"
     per_thread_info="wrk2_benchmark_current_rps{label=\"thread-${i}\"} 0\n$per_thread_info"
+    per_thread_info="wrk2_benchmark_average_tcp_reconnect_rate{label=\"thread-${i}\"} 0\n$per_thread_info"
+    eer_thread_info="wrk2_benschmark_current_tcp_reconnect_rate{label=\"thread-${i}\"} 0\n$per_thread_info"
 done
 
 cat << EOF | $curl_pgw
@@ -231,8 +237,26 @@ cat << EOF | $curl_pgw
 # TYPE wrk2_benchmark_responses counter
 # TYPE wrk2_benchmark_average_rps gauge
 # TYPE wrk2_benchmark_current_rps gauge
+# TYPE wrk2_benchmark_average_tcp_reconnect_rate gauge
+# TYPE wrk2_benchmark_current_tcp_reconnect_rate gauge
 # TYPE wrk2_benchmark_requested_rps gauge
 # TYPE wrk2_benchmark_duration counter
+# TYPE wrk2_benchmark_node_cpuclock gauge
+wrk2_benchmark_node_cpuclock{kind="current"} 0
+# TYPE wrk2_benchmark_node_loadavg gauge
+wrk2_benchmark_node_loadavg{interval="1m",kind="raw"} 0
+wrk2_benchmark_node_loadavg{interval="5m",kind="raw"} 0
+wrk2_benchmark_node_loadavg{interval="15m",kind="raw"} 0
+wrk2_benchmark_node_loadavg{interval="1m",kind="per_core"} 0
+wrk2_benchmark_node_loadavg{interval="5m",kind="per_core"} 0
+wrk2_benchmark_node_loadavg{interval="15m",kind="per_core"} 0
+wrk2_benchmark_node_loadavg{interval="1m",kind="per_thread"} 0
+wrk2_benchmark_node_loadavg{interval="5m",kind="per_thread"} 0
+wrk2_benchmark_node_loadavg{interval="15m",kind="per_thread"} 0
+# TYPE wrk2_benchmark_node_meminfo gauge
+wrk2_benchmark_node_meminfo{kind="used"} 0
+# TYPE wrk2_benchmark_node_swapinfo gauge
+wrk2_benchmark_node_swapinfo{kind="used"} 0
 $(echo -e $per_thread_info)
 wrk2_benchmark_requested_rps 0
 wrk2_benchmark_duration 0

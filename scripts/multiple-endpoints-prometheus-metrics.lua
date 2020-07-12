@@ -57,9 +57,12 @@ function prom(mname, value)
                    "wrk2_benchmark_%s{thread=\"thread-%s\"} %d\n",mname,id,value)
 end
 
-function write_metrics(req, resp, avg, curr)
+function write_metrics(req, resp, avg, curr, avg_reconn, curr_reconn)
     w = prom("requests", req) .. prom("responses", resp) 
     w = w .. prom("average_rps", avg) .. prom("current_rps", curr)
+    w = w .. prom("average_tcp_reconnect_rate", avg_reconn)
+    w = w .. prom("run_average_tcp_reconnect_rate", avg_reconn)
+    w = w .. prom("current_tcp_reconnect_rate", curr_reconn)
     f=io.open(string.format("thread-%d_seq-%d.txt", id, write_iter), "w+")
     f:write(w)
     f:flush()
@@ -85,6 +88,9 @@ function init(args)
     report_every=1 --seconds
     responses=0
     requests=0
+    reconnects=0
+    reconnects=0
+    prev_reconnects=0
     start_msec = micro_ts()
     prev_msec = start_msec
     prev_call_count = 0
@@ -93,7 +99,7 @@ function init(args)
 
     -- write first metric - all 0, to reset counters
     write_iter = 0
-    write_metrics(0,0,0,0)
+    write_metrics(0,0,0,0,0,0)
 
 
     -- parse command line URLs and prepare requests
@@ -175,6 +181,7 @@ function response(status, headers)
     if prev_srv ~= endpoints[idx][6] then
         -- Re-setting the thread's server address forces a reconnect
         wrk.thread.addr = endpoints[idx][2]
+        reconnects = reconnects + 1
     end
 
     responses = responses + 1
@@ -185,8 +192,11 @@ function response(status, headers)
 
         write_metrics(requests, responses,
                       responses / (sdiff_msec / 1000),
-                      (responses - prev_call_count) / (diff_msec / 1000))
+                      (responses - prev_call_count) / (diff_msec / 1000),
+                      reconnects / (sdiff_msec / 1000),
+                      (reconnects-prev_reconnects) / (diff_msec / 1000))
 
+        prev_reconnects = reconnects
         prev_msec = now_msec
         prev_call_count = responses
     end
