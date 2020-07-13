@@ -150,7 +150,7 @@ prometheus_pusher() {
 
     while [ ! -f "benchmark-end.txt" ] ; do
         sleep 0.5
-        mcount=$(ls -1 | grep -cE "thread-[0-9]+_seq-${iter}.txt")
+        mcount=$(ls -1 | grep -cE "^thread-[0-9]+_seq-${iter}.txt")
 
         [ $mcount -lt $num_threads ] && continue
 
@@ -164,6 +164,7 @@ prometheus_pusher() {
         [ $progress -gt 100 ] && progress=100
 
 
+        # runtime info
         cat << EOF | $curl_pgw \
 
 ${cpuinfo}
@@ -174,26 +175,27 @@ ${meminfo}
 # TYPE wrk2_benchmark_responses counter
 # TYPE wrk2_benchmark_average_rps gauge
 # TYPE wrk2_benchmark_current_rps gauge
-# TYPE wrk2_benchmark_run_average_tcp_reconnect_rate gauge
 # TYPE wrk2_benchmark_average_tcp_reconnect_rate gauge
 # TYPE wrk2_benchmark_current_tcp_reconnect_rate gauge
 # TYPE wrk2_benchmark_rgauge
 # TYPE wrk2_benchmark_progress counter
 # TYPE wrk2_benchmark_requested_rps gauge
-# TYPE wrk2_benchmark_run_requested_rps gauge
 # TYPE wrk2_benchmark_thread_count counter
-# TYPE wrk2_benchmark_run_thread_count counter
 # TYPE wrk2_benchmark_duration counter
-# TYPE wrk2_benchmark_run_duration counter
 wrk2_benchmark_progress $progress
 wrk2_benchmark_requested_rps $req_rps
-wrk2_benchmark_run_requested_rps $req_rps
 wrk2_benchmark_thread_count $num_threads
-wrk2_benchmark_run_thread_count $num_threads
 wrk2_benchmark_duration $duration
-wrk2_benchmark_run_duration $duration
-$(cat thread-*_seq-${iter}.txt)
+$(grep -h -vE '^wrk2_benchmark_run_' thread-*_seq-${iter}.txt)
 EOF
+
+        # Results info, pushed after run concluded
+        cat << EOF > wrk2_benchmark_run.txt
+# TYPE wrk2_benchmark_run_average_tcp_reconnect_rate gauge
+$(grep -h -E '^wrk2_benchmark_run_' thread-*_seq-${iter}.txt)
+$(echo "$loadavg" | sed 's/wrk2_benchmark_node_/wrk2_benchmark_run_node_/')
+EOF
+
         echo "Progress: $progress% , ${runtime}s / ${duration}s"
         rm thread-*_seq-${iter}.txt
         iter=$(($iter+1))
@@ -220,7 +222,7 @@ sleep 2
 kill %1
 echo ""
 
-# set sum gauges to 0, progress to 100
+# set sum gauges to 0, progress to 100, update wrk2_benchmark_run metrics
 per_thread_info=""
 for i in $(seq $conn); do
     per_thread_info="wrk2_benchmark_requests{label=\"thread-${i}\"} 0\n$per_thread_info"
@@ -232,7 +234,6 @@ for i in $(seq $conn); do
 done
 
 cat << EOF | $curl_pgw
-# TYPE wrk2_benchmark_progress counter
 # TYPE wrk2_benchmark_requests counter
 # TYPE wrk2_benchmark_responses counter
 # TYPE wrk2_benchmark_average_rps gauge
@@ -260,6 +261,16 @@ wrk2_benchmark_node_swapinfo{kind="used"} 0
 $(echo -e $per_thread_info)
 wrk2_benchmark_requested_rps 0
 wrk2_benchmark_duration 0
+
+# TYPE wrk2_benchmark_run_requested_rps gauge
+# TYPE wrk2_benchmark_run_thread_count counter
+# TYPE wrk2_benchmark_run_duration counter
+wrk2_benchmark_run_requested_rps $rps
+wrk2_benchmark_run_thread_count $conn
+wrk2_benchmark_run_duration $duration_s
+$(cat wrk2_benchmark_run.txt)
+
+# TYPE wrk2_benchmark_progress counter
 wrk2_benchmark_progress 100
 EOF
 
