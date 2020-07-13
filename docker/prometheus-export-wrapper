@@ -9,7 +9,7 @@ rps=10
 dur=60
 pgw="http://pushgateway.monitoring:9091/metrics/job/wrk2_benchmark/instance/test_run"
 
-[ -z "$1" -o "help" = "$1" -o "-h" = "$1" -o "--help" = "$1" ] && {
+usage() {
     echo "Usage:"
     echo "  docker run -ti quay.io/kinvolk/wrk2-srvmesh-bench \\" 
     echo "        [-c <num-of-concurrent-connections>] \\"
@@ -28,7 +28,13 @@ pgw="http://pushgateway.monitoring:9091/metrics/job/wrk2_benchmark/instance/test
     echo " -p <push-gateway> - URL of prometheus push gateway. Default: $pgw"
     echo "                     Use 'stdout' to just print to standard output."
     echo
-    exit
+}
+
+# --
+
+[ -z "$1" -o "help" = "$1" -o "-h" = "$1" -o "--help" = "$1" ] && {
+    usage
+    exit 0
 }
 
 servers=""
@@ -45,10 +51,24 @@ for arg do
     servers="$servers $arg"
 done
 
+# set up CURL command to push to Prometheus
 if [ "$pgw" = "stdout" ] ; then
     curl_pgw="cat -"
 else
+    # check if gateway is available
     curl_pgw="curl -s --data-binary @- $pgw"
+    echo -e "# TYPE wrk2_benchmark_progress counter\nwrk2_benchmark_progress 0" \
+        | $curl_pgw
+
+    if [ $? -ne 0 ]; then
+        echo
+        echo "ERROR posting to prometheus push gateway $pgw"
+        echo
+        usage
+        echo
+        echo "Aborting due to errors."
+        exit 1
+    fi
 fi
 export curl_pgw
 
@@ -165,8 +185,7 @@ prometheus_pusher() {
 
 
         # runtime info
-        cat << EOF | $curl_pgw \
-
+        cat << EOF | $curl_pgw
 ${cpuinfo}
 ${cpuclock}
 ${loadavg}
