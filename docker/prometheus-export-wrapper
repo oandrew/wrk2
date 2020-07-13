@@ -140,13 +140,13 @@ prometheus_pusher() {
     local req_rps="$2"
     local duration="$3"
     local curl_pgw="$4"
+    local start_ts="$5"
 
     local cpuinfo=$(get_cpuinfo)
     local threads=$(get_cpuinfo | grep '{info="threads"}' | sed 's/.*} //')
     local cores=$(get_cpuinfo | grep '{info="cores"}' | sed 's/.*} //')
 
     local iter=0
-    local start_ts=$(date +%s)
 
     while [ ! -f "benchmark-end.txt" ] ; do
         sleep 0.5
@@ -208,7 +208,9 @@ EOF
 
 rm -f thread-*_seq-*.txt "benchmark-end.txt"
 
-prometheus_pusher "$conn" "$rps" "$duration_s" "$curl_pgw" &
+start_ts=$(date +%s)
+
+prometheus_pusher "$conn" "$rps" "$duration_s" "$curl_pgw" "$start_ts" &
 
 unbuffer /usr/local/bin/wrk \
               -s /usr/local/bin/multiple-endpoints-prometheus-metrics.lua \
@@ -221,6 +223,10 @@ unbuffer /usr/local/bin/wrk \
 sleep 2
 kill %1
 echo ""
+
+# ---------------------
+
+end_ts=$(date +%s)
 
 # set sum gauges to 0, progress to 100, update wrk2_benchmark_run metrics
 per_thread_info=""
@@ -264,12 +270,14 @@ wrk2_benchmark_duration 0
 
 # TYPE wrk2_benchmark_run_requested_rps gauge
 # TYPE wrk2_benchmark_run_thread_count counter
-# TYPE wrk2_benchmark_run_duration counter
 wrk2_benchmark_run_requested_rps $rps
 wrk2_benchmark_run_thread_count $conn
-wrk2_benchmark_run_duration $duration_s
 $(cat wrk2_benchmark_run.txt)
 
+# TYPE wrk2_benchmark_run_runtime gauge
+wrk2_benchmark_run_runtime{kind="start"} $start_ts
+wrk2_benchmark_run_runtime{kind="end"} $end_ts
+wrk2_benchmark_run_runtime{kind="duration"} $duration_s
 # TYPE wrk2_benchmark_progress counter
 wrk2_benchmark_progress 100
 EOF
