@@ -25,19 +25,7 @@ end
 -- Thread context
 
 function micro_ts()
-    -- local sec, nsec
-    -- sec, nsec = posix.clock_gettime(0)
-    -- return sec * 1000 + nsec / 1000000
     return 1000 * socket.gettime()
-end
-
-function ts_diff(prev, now)
-    if (now < prev) then
-        -- wrap around
-        return (math.maxinteger - prev) + now
-    else
-        return now - prev
-    end
 end
 
 function xtract(str, match, default, err_msg)
@@ -187,9 +175,9 @@ function response(status, headers)
 
     responses = responses + 1
     now_msec = micro_ts()
-    if ts_diff(prev_msec, now_msec) > report_every * 1000 then
-        diff_msec = ts_diff(prev_msec, now_msec)
-        sdiff_msec = ts_diff(start_msec, now_msec)
+    if (now_msec - prev_msec) > report_every * 1000 then
+        diff_msec = now_msec - prev_msec
+        sdiff_msec = now_msec - start_msec
 
         write_metrics(requests, responses,
                       responses / (sdiff_msec / 1000),
