@@ -228,14 +228,23 @@ EOF
 rm -f thread-*_seq-*.txt "benchmark-end.txt"
 
 start_ts=$(date +%s)
-
 prometheus_pusher "$conn" "$rps" "$duration_s" "$curl_pgw" "$start_ts" &
+
+# split off first endpoint, generate LUA include file with all endpoints
+# to spped up thread start-up when many endpoints are defined
+first_server=$(echo $servers | sed 's/ .*//g')
+count=0
+echo 'input_endpoints={}' > endpoints.lua
+for e in $servers; do
+    echo "input_endpoints[$count] = \"$e\" " >> endpoints.lua
+    count=$((count+1))
+done
 
 unbuffer /usr/local/bin/wrk \
               -s /usr/local/bin/multiple-endpoints-prometheus-metrics.lua \
               --lua-dont-pass-body \
               -L -R "$rps" -c "$conn" -t "$conn" -d "$dur" \
-              $servers \
+              $first_server \
     | unbuffer -p tee stats
 
 > "benchmark-end.txt"
