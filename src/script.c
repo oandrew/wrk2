@@ -194,6 +194,10 @@ bool script_has_done(lua_State *L) {
     return script_is_function(L, "done");
 }
 
+bool script_has_teardown(lua_State *L) {
+    return script_is_function(L, "teardown");
+}
+
 void script_header_done(lua_State *L, luaL_Buffer *buffer) {
     luaL_pushresult(buffer);
 }
@@ -228,6 +232,11 @@ void script_errors(lua_State *L, errors *errors) {
     lua_newtable(L);
     set_fields(L, 2, fields);
     lua_setfield(L, 1, "errors");
+}
+
+void script_teardown(lua_State *L) {
+    lua_getglobal(L, "teardown");
+    lua_call(L, 0, 0);
 }
 
 void script_done(lua_State *L, stats *latency, stats *requests) {

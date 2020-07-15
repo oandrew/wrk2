@@ -201,6 +201,10 @@ int main(int argc, char **argv) {
 
         hdr_add(latency_histogram, t->latency_histogram);
         hdr_add(u_latency_histogram, t->u_latency_histogram);
+
+        if (script_has_teardown(t->L)) {
+            script_teardown(t->L);
+        }
     }
 
     long double runtime_s   = runtime_us / 1000000.0;

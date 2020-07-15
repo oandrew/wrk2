@@ -70,8 +70,8 @@ function init(args)
     require "endpoints"
 
     -- Thread globals used by done()
-    called_idxs = ""
-    urls = ""
+    url_call_count = ""
+
     -- URL list variables
     --   Thread globals used by request(), response()
     addrs = {}
@@ -155,18 +155,14 @@ function init(args)
                     "GET %s HTTP/1.1\r\nHost:%s:%s\r\n\r\n", path, host, port)
         endpoints[i][6] = string.format(host) -- for reconnect comparison
                                               -- (regex objects aren't comparable)
+        endpoints[i][7] = 0
+        endpoints[i][8] = e
         prev_srv = endpoints[i]
-        if urls == "" then
-            urls = e
-        else
-            urls = string.format("%s,%s",urls,e)
-        end
     end
 
     input_endpoints=nil
     collectgarbage()
 
-    urls = urls .. ","
     -- initialize idx, assign req and addr
     idx = 0 -- math.random(0, #endpoints)
     wrk.thread.addr = endpoints[idx][2]
@@ -179,28 +175,28 @@ function request()
 end
 
 function response(status, headers)
-    -- add current index to string of endpoints called
-    local c = ","
-    if called_idxs == "" then c="" end
-    called_idxs = string.format("%s%s%s",called_idxs,c,idx)
 
     -- Pick the next endpoint in the list of endpoints, for the next request
     -- Also, update the thread's remote server addr if endpoint
     -- is on a different server.
+
     local prev_srv = endpoints[idx][6]
-    -- idx = math.random(0, #endpoints)
+    endpoints[idx][7] = endpoints[idx][7] + 1
     idx = (idx + 1) % (#endpoints + 1)
+
     if prev_srv ~= endpoints[idx][6] then
         -- Re-setting the thread's server address forces a reconnect
         wrk.thread.addr = endpoints[idx][2]
         reconnects = reconnects + 1
     end
 
+    -- write out report and update callend endpoints string in configured
+    -- interval
     responses = responses + 1
-    now_msec = micro_ts()
+    local now_msec = micro_ts()
     if (now_msec - prev_msec) > report_every * 1000 then
-        diff_msec = now_msec - prev_msec
-        sdiff_msec = now_msec - start_msec
+        local diff_msec = now_msec - prev_msec
+        local sdiff_msec = now_msec - start_msec
 
         write_metrics(requests, responses,
                       responses / (sdiff_msec / 1000),
@@ -211,8 +207,27 @@ function response(status, headers)
         prev_reconnects = reconnects
         prev_msec = now_msec
         prev_call_count = responses
-        collectgarbage()
+   end
+end
+
+
+function teardown()
+    local now_msec = micro_ts()
+    local called_arr = {}
+
+    local diff_msec = now_msec - prev_msec
+    local sdiff_msec = now_msec - start_msec
+
+    write_metrics(requests, responses,
+                  responses / (sdiff_msec / 1000),
+                  (responses - prev_call_count) / (diff_msec / 1000),
+                  reconnects / (sdiff_msec / 1000),
+                  (reconnects-prev_reconnects) / (diff_msec / 1000))
+
+    for i=0, #endpoints, 1 do
+        called_arr[i+1] = endpoints[i][8] .. " " .. endpoints[i][7]
     end
+    url_call_count = table.concat(called_arr, ";")
 end
 
 -----------------
@@ -227,31 +242,25 @@ function done(summary, latency, requests)
     print(string.format("Socket read errors: %d", summary.errors.read))
     print(string.format("Socket write errors: %d", summary.errors.write))
 
-    -- generate table of URL strings from first thread's endpoints table
-    -- (all threads generate the same table in init())
+    -- extract individual URL call counts from threads, sum up
+    local t = unpack(threads,1,2)
     local urls = {}
-    local counts = {}
-    local i = 0
-    t = unpack(threads,1,2)
-    t:get("urls"):gsub("([^,]+),",
-            function(u)
-                urls[i]=u
-                counts[i] = 0
-                i = i+1
-            end)
 
-    -- fetch url call counts of individual threads
-    local c = t:get("called_idxs")
-    c = c .. ","
     for i, t in ipairs(threads) do
-        c:gsub("([0-9]+),", function(s)
-                                i = tonumber(s)
-                                counts[i] = counts[i] + 1
-                             end)
+        local url_call_count = t:get("url_call_count")
+        for entry in string.gmatch(url_call_count, "([^;]+)") do
+            local url = string.match(entry,"^([^ ]+) .*")
+            local count = string.match(entry,".* ([^ ]+)")
+            if urls[url] then
+                urls[url] = urls[url] + count
+            else
+                urls[url] = count
+            end
+        end
     end
 
     print("\nURL call count")
-    for i=0, #urls, 1 do
-        print(string.format("%s : %d", urls[i], counts[i]))
+    for url, count in pairs(urls) do
+        print(string.format("%s : %d", url, count))
     end
 end

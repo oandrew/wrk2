@@ -27,6 +27,7 @@ usage() {
     echo " -d <duration> - Test duration in seconds. Default: $dur"
     echo " -p <push-gateway> - URL of prometheus push gateway. Default: $pgw"
     echo "                     Use 'stdout' to just print to standard output."
+    echo "                     Use 'null' to suppress output (for debugging)."
     echo
 }
 
@@ -54,6 +55,8 @@ done
 # set up CURL command to push to Prometheus
 if [ "$pgw" = "stdout" ] ; then
     curl_pgw="cat -"
+elif [ "$pgw" = "null" ] ; then 
+    curl_pgw="true"
 else
     # check if gateway is available
     curl_pgw="curl -s --data-binary @- $pgw"
@@ -88,6 +91,11 @@ echo "   servers: $servers"
 echo
 
 sleep 1
+
+# we use files to exchange per-thread matrics; use ram-backed fs for this file
+# I/O to prevent threads being stuck in IOWAIT
+cd /tmpfs
+
 
 # ---------------------
 
@@ -166,23 +174,30 @@ prometheus_pusher() {
     local threads=$(get_cpuinfo | grep '{info="threads"}' | sed 's/.*} //')
     local cores=$(get_cpuinfo | grep '{info="cores"}' | sed 's/.*} //')
 
+    local cpuclock=$(get_cpuclock)
+    local loadavg=$(get_loadavg "$cores" "$threads")
+    local meminfo=$(get_meminfo)
+
     local iter=0
 
     while [ ! -f "benchmark-end.txt" ] ; do
-        sleep 0.5
-        mcount=$(ls -1 | grep -cE "^thread-[0-9]+_seq-${iter}.txt")
+        mcount=$(ls -1 thread-*_seq-${iter}.txt 2>/dev/null | wc -l)
 
-        [ $mcount -lt $num_threads ] && continue
-
-        local cpuclock=$(get_cpuclock)
-        local loadavg=$(get_loadavg "$cores" "$threads")
-        local meminfo=$(get_meminfo)
+        [ $mcount -lt $num_threads ] && {
+            sleep 0.01 # yield CPU
+            continue; }
 
         now=$(date +%s)
         runtime=$(($now - $start_ts))
         progress=$(($runtime * 100 / $duration))
         [ $progress -gt 100 ] && progress=100
 
+        # update every 10s
+        if [ $((runtime % 10)) -eq 0 ] ; then
+            cpuclock=$(get_cpuclock)
+            loadavg=$(get_loadavg "$cores" "$threads")
+            meminfo=$(get_meminfo)
+        fi
 
         # runtime info
         cat << EOF | $curl_pgw
@@ -205,13 +220,13 @@ wrk2_benchmark_progress $progress
 wrk2_benchmark_requested_rps $req_rps
 wrk2_benchmark_thread_count $num_threads
 wrk2_benchmark_duration $duration
-$(grep -h -vE '^wrk2_benchmark_run_' thread-*_seq-${iter}.txt)
+$(cat thread-*_seq-${iter}.txt | grep -v 'wrk2_benchmark_run_')
 EOF
 
         # Results info, pushed after run concluded
         cat << EOF > wrk2_benchmark_run.txt
 # TYPE wrk2_benchmark_run_average_tcp_reconnect_rate gauge
-$(grep -h -E '^wrk2_benchmark_run_' thread-*_seq-${iter}.txt)
+$(cat thread-*_seq-${iter}.txt | grep 'wrk2_benchmark_run_')
 $(echo "$loadavg" | sed 's/wrk2_benchmark_node_/wrk2_benchmark_run_node_/')
 EOF
 
