@@ -163,6 +163,9 @@ function init(args)
         end
     end
 
+    input_endpoints=nil
+    collectgarbage()
+
     urls = urls .. ","
     -- initialize idx, assign req and addr
     idx = 0 -- math.random(0, #endpoints)
@@ -208,6 +211,7 @@ function response(status, headers)
         prev_reconnects = reconnects
         prev_msec = now_msec
         prev_call_count = responses
+        collectgarbage()
     end
 end
 

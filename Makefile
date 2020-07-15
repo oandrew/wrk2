@@ -59,7 +59,7 @@ $(ODIR)/%.o : %.c
 
 $(LDIR)/libluajit.a:
 	@echo Building LuaJIT...
-	@$(MAKE) -C $(LDIR) BUILDMODE=static
+	@$(MAKE) -C $(LDIR) BUILDMODE=static XCFLAGS=-DLUAJIT_ENABLE_GC64
 
 .PHONY: all clean
 .SUFFIXES:
