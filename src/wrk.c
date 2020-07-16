@@ -129,14 +129,13 @@ int main(int argc, char **argv) {
     
     uint64_t connections = cfg.connections / cfg.threads;
     double throughput    = (double)cfg.rate / cfg.threads;
-    uint64_t stop_at     = time_us() + (cfg.duration * 1000000);
 
+    uint64_t thread_init = time_us();
     for (uint64_t i = 0; i < cfg.threads; i++) {
         thread *t = &threads[i];
         t->loop        = aeCreateEventLoop(10 + cfg.connections * 3);
         t->connections = connections;
         t->throughput = throughput;
-        t->stop_at     = stop_at;
         t->reconnect_all = NULL;
 
         t->L = script_create(cfg.script, url, headers);
@@ -151,7 +150,14 @@ int main(int argc, char **argv) {
                 parser_settings.on_body         = response_body;
             }
         }
+    }
 
+    printf("Initialised %d threads in %d ms.\n",
+                            cfg.threads, (time_us() - thread_init) / 1000);
+    uint64_t stop_at     = time_us() + (cfg.duration * 1000000);
+    for (uint64_t i = 0; i < cfg.threads; i++) {
+        thread *t = &threads[i];
+        t->stop_at = stop_at;
         if (!t->loop || pthread_create(&t->thread, NULL, &thread_main, t)) {
             char *msg = strerror(errno);
             fprintf(stderr, "unable to create thread %"PRIu64": %s\n", i, msg);
