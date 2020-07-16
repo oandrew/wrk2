@@ -51,6 +51,15 @@ function prom(mname, value)
                    "wrk2_benchmark_%s{thread=\"thread-%s\"} %d\n",mname,id,value)
 end
 
+function busysleep(microseconds)
+    -- no sleep() or delay() in lua
+    s = micro_ts()
+    n = s
+    while s + microseconds > n do
+        n = micro_ts()
+    end
+end
+
 function write_metrics(req, resp, avg, curr, avg_reconn, curr_reconn)
     w = prom("requests", req) .. prom("responses", resp) 
     w = w .. prom("average_rps", avg) .. prom("current_rps", curr)
@@ -65,7 +74,6 @@ function write_metrics(req, resp, avg, curr, avg_reconn, curr_reconn)
 end
 
 function init(args)
-
     -- load pre-generated array of list of endpoints
     require "endpoints"
 
@@ -94,10 +102,6 @@ function init(args)
     prev_call_count = 0
     print_report=0
     math.randomseed(start_msec)
-
-    -- write first metric - all 0, to reset counters
-    write_iter = 0
-    write_metrics(0,0,0,0,0,0)
 
     -- parse command line URLs and prepare requests
     local prev_srv = {}
@@ -128,7 +132,6 @@ function init(args)
         if      prev_srv[0] == proto
             and prev_srv[1] == host
             and prev_srv[3] == port then
-
                 addr = prev_srv[2]
             else
                 for k, v in ipairs(wrk.lookup(host, port)) do
@@ -139,7 +142,8 @@ function init(args)
                 end
                 if not addr then
                     print(string.format(
-                        "Error: Unable to connect to %s port %s.", host, port))
+                        "Thread %d Error: Failed to connect to %s:%d",
+                        id, host, port))
                     os.exit(2)
                 end
         end
@@ -157,15 +161,18 @@ function init(args)
                                               -- (regex objects aren't comparable)
         endpoints[i][7] = 0
         endpoints[i][8] = e
-        prev_srv = endpoints[i]
     end
 
     input_endpoints=nil
     collectgarbage()
 
     -- initialize idx, assign req and addr
-    idx = 0 -- math.random(0, #endpoints)
+    idx = 0
     wrk.thread.addr = endpoints[idx][2]
+
+    -- write first metric - all 0, to reset counters
+    write_iter = 0
+    write_metrics(0,0,0,0,0,0)
 end
 
 function request()

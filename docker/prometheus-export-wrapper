@@ -168,7 +168,6 @@ prometheus_pusher() {
     local req_rps="$2"
     local duration="$3"
     local curl_pgw="$4"
-    local start_ts="$5"
 
     local cpuinfo=$(get_cpuinfo)
     local threads=$(get_cpuinfo | grep '{info="threads"}' | sed 's/.*} //')
@@ -179,32 +178,64 @@ prometheus_pusher() {
     local meminfo=$(get_meminfo)
 
     local iter=0
+    local init=1
+
+    local start_ts=""
+    local last_load_report=$(date +%s)
 
     while [ ! -f "benchmark-end.txt" ] ; do
-        mcount=$(ls -1 thread-*_seq-${iter}.txt 2>/dev/null | wc -l)
-
-        [ $mcount -lt $num_threads ] && {
-            sleep 0.01 # yield CPU
-            continue; }
-
         now=$(date +%s)
-        runtime=$(($now - $start_ts))
-        progress=$(($runtime * 100 / $duration))
-        [ $progress -gt 100 ] && progress=100
-
-        # update every 10s
-        if [ $((runtime % 10)) -eq 0 ] ; then
+        # update load stats every 10s
+        if [ $(($now - $last_load_report)) -ge 10 ] ; then
             cpuclock=$(get_cpuclock)
             loadavg=$(get_loadavg "$cores" "$threads")
             meminfo=$(get_meminfo)
-        fi
-
-        # runtime info
-        cat << EOF | $curl_pgw
+            cat << EOF | $curl_pgw
 ${cpuinfo}
 ${cpuclock}
 ${loadavg}
 ${meminfo}
+EOF
+            last_load_report=$now
+        fi
+
+        mcount=$(ls -1 thread-*_seq-${iter}.txt 2>/dev/null | wc -l)
+
+        # wrk2 still initialising?
+        [ $init -eq 1 ] && {
+            grep -E \
+                  '^Initialised [0-9]+ threads in [0-9]+ ms.' stats 2>/dev/null
+            if [ $? -ne 0 ] ; then
+                init_progress=$(($mcount * 100 / num_threads))
+                cat << EOF | $curl_pgw
+# TYPE wrk2_benchmark_progress counter
+wrk2_benchmark_progress{status="init"} $init_progress
+EOF
+                echo "INIT Progress: $init_progress% , ${mcount} / ${num_threads} threads"
+                sleep 1
+                continue
+            else
+                init=0
+                cat << EOF | $curl_pgw
+# TYPE wrk2_benchmark_progress counter
+wrk2_benchmark_progress{status="init"} 100
+wrk2_benchmark_progress{status="run"} 0
+EOF
+                start_ts=$now
+            fi
+        }
+
+        # wait until all threads reported for this iteration
+        [ $mcount -lt $num_threads ] && {
+            sleep 0.01 # yield CPU
+            continue; }
+
+        runtime=$(($now - $start_ts))
+        progress=$(($runtime * 100 / $duration))
+        [ $progress -gt 100 ] && progress=100
+
+        # runtime info
+        cat << EOF | $curl_pgw
 # TYPE wrk2_benchmark_requests counter
 # TYPE wrk2_benchmark_responses counter
 # TYPE wrk2_benchmark_average_rps gauge
@@ -216,7 +247,8 @@ ${meminfo}
 # TYPE wrk2_benchmark_requested_rps gauge
 # TYPE wrk2_benchmark_thread_count counter
 # TYPE wrk2_benchmark_duration counter
-wrk2_benchmark_progress $progress
+wrk2_benchmark_progress{status="init"} 100
+wrk2_benchmark_progress{status="run"} $progress
 wrk2_benchmark_requested_rps $req_rps
 wrk2_benchmark_thread_count $num_threads
 wrk2_benchmark_duration $duration
@@ -230,7 +262,7 @@ $(cat thread-*_seq-${iter}.txt | grep 'wrk2_benchmark_run_')
 $(echo "$loadavg" | sed 's/wrk2_benchmark_node_/wrk2_benchmark_run_node_/')
 EOF
 
-        echo "Progress: $progress% , ${runtime}s / ${duration}s"
+        echo "RUN Progress: $progress% , ${runtime}s / ${duration}s"
         rm thread-*_seq-${iter}.txt
         iter=$(($iter+1))
     done
@@ -240,10 +272,10 @@ EOF
 
 # ---------------------
 
+start_ts=$(date +%s)
 rm -f thread-*_seq-*.txt "benchmark-end.txt"
 
-start_ts=$(date +%s)
-prometheus_pusher "$conn" "$rps" "$duration_s" "$curl_pgw" "$start_ts" &
+prometheus_pusher "$conn" "$rps" "$duration_s" "$curl_pgw" &
 
 # split off first endpoint, generate LUA include file with all endpoints
 # to spped up thread start-up when many endpoints are defined
@@ -255,6 +287,21 @@ for e in $servers; do
     count=$((count+1))
 done
 
+# wait until first endpoint becomes available.
+echo "Waiting for '$first_server' to become available"
+timeout=120
+st=$(date +%s)
+ts="$st"
+while [ $((st + timeout)) -ge $ts ]; do
+    echo "    Trying $first_server (for $((st+timeout-ts)) more seconds) ..."
+    curl -s -m 5 "$first_server" >/dev/null && break
+    ts=$(date +%s)
+    sleep 1
+done
+echo "'$first_server' responded, starting benchmark."
+echo "----"
+echo
+
 unbuffer /usr/local/bin/wrk \
               -s /usr/local/bin/multiple-endpoints-prometheus-metrics.lua \
               --lua-dont-pass-body \
@@ -263,8 +310,11 @@ unbuffer /usr/local/bin/wrk \
     | unbuffer -p tee stats
 
 > "benchmark-end.txt"
+
 sleep 2
-kill %1
+kill -9 %1
+wait
+
 echo ""
 
 # ---------------------
@@ -322,7 +372,9 @@ wrk2_benchmark_run_runtime{kind="start"} $start_ts
 wrk2_benchmark_run_runtime{kind="end"} $end_ts
 wrk2_benchmark_run_runtime{kind="duration"} $duration_s
 # TYPE wrk2_benchmark_progress counter
-wrk2_benchmark_progress 100
+wrk2_benchmark_progress{status="init"} 100
+wrk2_benchmark_progress{status="run"} 100
+wrk2_benchmark_progress{status="done"} 100
 EOF
 
 # send final wrk2 stats
@@ -437,8 +489,4 @@ awk '
     ' stats \
  | $curl_pgw
 
-cat << EOF | $curl_pgw
-# TYPE wrk2_benchmark_progress counter
-wrk2_benchmark_progress 100
-EOF
 
