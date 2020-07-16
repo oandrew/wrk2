@@ -12,6 +12,9 @@ require "socket"
 -- here significantly speeds up the thread start-up if many threads/ endpoints
 -- are used.
 
+-- load pre-generated array of list of endpoints
+require "endpoints"
+
 -----------------
 -- main() context
 
@@ -19,20 +22,7 @@ require "socket"
 local threads = {}
 local counter = 1
 
-function setup(thread)
-    -- Fill global threads table with thread handles so done()
-    -- can process per-thread data
-    table.insert(threads, thread)
-    thread:set("id",counter)
-    counter = counter +1
-end
-
------------------
--- Thread context
-
-function micro_ts()
-    return 1000 * socket.gettime()
-end
+local global_endpoints = {}
 
 function xtract(str, match, default, err_msg)
     local ret, count = string.gsub(str, match, "%1", 1)
@@ -44,6 +34,84 @@ function xtract(str, match, default, err_msg)
         ret = default
     end
     return ret
+end
+
+function setup(thread)
+    -- Fill global threads table with thread handles so done()
+    -- can process per-thread data
+    table.insert(threads, thread)
+    thread:set("id",counter)
+    if counter == 1 then
+        -- initialise endpoint_addrs here so we don't call (costly)
+        -- wrk.lookup() per thread
+        local prev_endpoint = {}
+        for i,e in pairs(input_endpoints) do
+            local proto = xtract(e,
+                    "^(http[s]?)://.*", nil, "missing or unsupported  protocol")
+            local host  = xtract(
+                    e, "^http[s]?://([^/:]+)[:/]?.*", nil, "missing host")
+
+            if proto == "http" then
+                def_port=80
+            else if proto == "https" then
+                    def_port=443
+                else
+                    print(string.format("Unsupported protocol '%s'",proto))
+                    os.exit(1)
+                end
+            end
+            local port  = xtract(e, "^http[s]?://[^/:]+:(%d+).*", def_port)
+            local path  = xtract(e, "^http[s]?://[^/]+(/.*)","/")
+
+            -- get IP addr(s) from hostname, validate by connecting
+            -- only connect if we did not connect before
+            local addr = nil
+            if      prev_endpoint[1] == proto
+                and prev_endpoint[2] == host
+                and prev_endpoint[3]  == port then
+                    addr = prev_endpoint[0]
+                else
+                    for k, v in ipairs(wrk.lookup(host, port)) do
+                        if wrk.connect(v) then
+                            addr = v
+                            break
+                        end
+                    end
+                    if not addr then
+                        print(string.format(
+                            "Thread %d Error: Failed to connect to %s:%d",
+                            id, host, port))
+                        os.exit(2)
+                    end
+            end
+
+            global_endpoints[i] = {}
+            global_endpoints[i][0] = addr
+            global_endpoints[i][1] = proto
+            global_endpoints[i][2] = host
+            global_endpoints[i][3] = port
+            global_endpoints[i][4] = string.format(
+                                    "GET %s HTTP/1.1\r\nHost:%s:%s\r\n\r\n",
+                                                            path, host, port)
+            global_endpoints[i][5] = e
+            prev_endpoint = global_endpoints[i]
+        end
+    end
+
+    for i, ep in pairs(global_endpoints) do
+        thread:set("ep_addr_" .. i, ep[0])
+        thread:set("ep_host_" .. i, tostring(ep[2]))
+        thread:set("ep_get_req_" .. i, tostring(ep[4]))
+        thread:set("ep_url_"  .. i, tostring(ep[5]))
+    end
+    counter = counter +1
+end
+
+-----------------
+-- Thread context
+
+function micro_ts()
+    return 1000 * socket.gettime()
 end
 
 function prom(mname, value)
@@ -74,21 +142,13 @@ function write_metrics(req, resp, avg, curr, avg_reconn, curr_reconn)
 end
 
 function init(args)
-    -- load pre-generated array of list of endpoints
-    require "endpoints"
-
     -- Thread globals used by done()
     url_call_count = ""
 
     -- URL list variables
     --   Thread globals used by request(), response()
-    addrs = {}
     idx = 0
-    --   table of lists; per entry:
-    --     proto, host, hostaddr, port, path + params
-    endpoints={}
-    --    table of prepared HTTP requests for endpoints above
-    reqs={}
+    endpoints = {}
 
     -- reporting variables
     report_every=1 --seconds
@@ -97,78 +157,27 @@ function init(args)
     reconnects=0
     reconnects=0
     prev_reconnects=0
-    start_msec = micro_ts()
-    prev_msec = start_msec
+    start_msec = nil
     prev_call_count = 0
     print_report=0
-    math.randomseed(start_msec)
 
     -- parse command line URLs and prepare requests
     local prev_srv = {}
     for i,e in pairs(input_endpoints) do
-        -- note that URL parsing does not support user/pass as 
-        -- wrk2 does not support auth
-        local proto = xtract(e,
-                "^(http[s]?)://.*", nil, "missing or unsupported  protocol")
-        local host  = xtract(
-                e, "^http[s]?://([^/:]+)[:/]?.*", nil, "missing host")
-
-        if proto == "http" then
-            def_port=80
-        else if proto == "https" then
-                def_port=443
-            else
-                print(string.format("Unsupported protocol '%s'",proto))
-                os.exit(1)
-            end
-        end
-        local port  = xtract(e, "^http[s]?://[^/:]+:(%d+).*", def_port)
-        local path  = xtract(e, "^http[s]?://[^/]+(/.*)","/")
-
-        -- get IP addr(s) from hostname, validate by connecting
-        -- only connect if we did not connect before to prevent thread init
-        -- stampede
-        local addr = nil
-        if      prev_srv[0] == proto
-            and prev_srv[1] == host
-            and prev_srv[3] == port then
-                addr = prev_srv[2]
-            else
-                for k, v in ipairs(wrk.lookup(host, port)) do
-                    if wrk.connect(v) then
-                        addr = v
-                        break
-                    end
-                end
-                if not addr then
-                    print(string.format(
-                        "Thread %d Error: Failed to connect to %s:%d",
-                        id, host, port))
-                    os.exit(2)
-                end
-        end
 
         -- store the endpoint
         endpoints[i] = {}
-        endpoints[i][0] = proto
-        endpoints[i][1] = host
-        endpoints[i][2] = addr
-        endpoints[i][3] = port
-        endpoints[i][4] = path
-        endpoints[i][5] = string.format(
-                    "GET %s HTTP/1.1\r\nHost:%s:%s\r\n\r\n", path, host, port)
-        endpoints[i][6] = string.format(host) -- for reconnect comparison
-                                              -- (regex objects aren't comparable)
-        endpoints[i][7] = 0
-        endpoints[i][8] = e
+        endpoints[i][0] = _G["ep_addr_" .. i]
+        endpoints[i][1] = _G["ep_host_" .. i]
+        endpoints[i][2] = _G["ep_url_"  .. i]
+        endpoints[i][3] = _G["ep_get_req_"  .. i]
+        endpoints[i][4] = 0
+        endpoints[i][5] = e
     end
-
-    input_endpoints=nil
-    collectgarbage()
 
     -- initialize idx, assign req and addr
     idx = 0
-    wrk.thread.addr = endpoints[idx][2]
+    wrk.thread.addr = endpoints[idx][0]
 
     -- write first metric - all 0, to reset counters
     write_iter = 0
@@ -176,24 +185,27 @@ function init(args)
 end
 
 function request()
-    local ret = endpoints[idx][5]
+    if nil == start_msec then
+        start_msec = micro_ts()
+        prev_msec = start_msec
+    end
+    local ret = endpoints[idx][3]
     requests = requests + 1
     return ret
 end
 
 function response(status, headers)
-
     -- Pick the next endpoint in the list of endpoints, for the next request
     -- Also, update the thread's remote server addr if endpoint
     -- is on a different server.
 
-    local prev_srv = endpoints[idx][6]
-    endpoints[idx][7] = endpoints[idx][7] + 1
+    local prev_srv = endpoints[idx][1]
+    endpoints[idx][4] = endpoints[idx][4] + 1
     idx = (idx + 1) % (#endpoints + 1)
 
-    if prev_srv ~= endpoints[idx][6] then
+    if prev_srv ~= endpoints[idx][1] then
         -- Re-setting the thread's server address forces a reconnect
-        wrk.thread.addr = endpoints[idx][2]
+        wrk.thread.addr = endpoints[idx][0]
         reconnects = reconnects + 1
     end
 
@@ -232,7 +244,7 @@ function teardown()
                   (reconnects-prev_reconnects) / (diff_msec / 1000))
 
     for i=0, #endpoints, 1 do
-        called_arr[i+1] = endpoints[i][8] .. " " .. endpoints[i][7]
+        called_arr[i+1] = endpoints[i][5] .. " " .. endpoints[i][4]
     end
     url_call_count = table.concat(called_arr, ";")
 end
