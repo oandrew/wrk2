@@ -514,6 +514,12 @@ void script_copy_value(lua_State *src, lua_State *dst, int index) {
             }
             lua_pop(src, 1);
             break;
+        case LUA_TUSERDATA:
+            {
+                struct addrinfo *src_addr = checkaddr(src);
+                script_addr_clone(dst, src_addr);
+            }
+            break;
         default:
             luaL_error(src, "cannot transfer '%s' to thread", luaL_typename(src, index));
     }
