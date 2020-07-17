@@ -23,6 +23,8 @@ COPY --from=builder /usr/local/lib/lua/ /usr/local/lib/lua/
 COPY --from=builder /usr/local/share/lua/ /usr/local/share/lua/
 COPY --from=builder /usr/src/wrk2-cache-stresser/scripts/multiple-endpoints-prometheus-metrics.lua /usr/local/bin/
 
+RUN mkdir /tmpfs
+
 COPY ./docker/prometheus-export-wrapper /usr/local/bin/
 
 ENTRYPOINT ["/usr/local/bin/prometheus-export-wrapper"]
