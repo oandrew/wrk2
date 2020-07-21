@@ -502,3 +502,28 @@ awk '
  | $curl_pgw
 
 
+# Retry killing linkerd2-proxy
+grace_max=10
+grace="$grace_max"
+while true; do
+    pkill linkerd2-proxy
+    if [ $? -eq 0 ]; then
+        sleep 1
+        grace="$grace_max"
+        continue
+    fi
+
+    if [ $grace -gt 0 ]; then
+        sleep 1
+        echo "Linkerd-proxy shutdown grace period: $grace"
+        grace=$(($grace-1))
+        continue
+    fi
+    break
+done
+
+# Rule #2: Double Tap
+pkill -9 linkerd2-proxy
+
+# exit successfully
+true
