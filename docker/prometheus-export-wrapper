@@ -11,7 +11,7 @@ pgw="http://pushgateway.monitoring:9091/metrics/job/wrk2_benchmark/instance/test
 
 usage() {
     echo "Usage:"
-    echo "  docker run -ti quay.io/kinvolk/wrk2-srvmesh-bench \\" 
+    echo "  docker run -ti quay.io/kinvolk/wrk2-srvmesh-bench \\"
     echo "        [-c <num-of-concurrent-connections>] \\"
     echo "        [-r <num-of-requests-per-second>] \\"
     echo "        [-d <duration>] \\"
@@ -55,11 +55,23 @@ done
 # set up CURL command to push to Prometheus
 if [ "$pgw" = "stdout" ] ; then
     curl_pgw="cat -"
-elif [ "$pgw" = "null" ] ; then 
+elif [ "$pgw" = "null" ] ; then
     curl_pgw="true"
 else
     # check if gateway is available
     curl_pgw="curl -s --data-binary @- $pgw"
+
+    # Retry reaching to Pushgateway
+    n=0
+    until [ "$n" -ge 10 ]
+    do
+        echo -e "# TYPE wrk2_benchmark_progress counter\nwrk2_benchmark_progress 0" \
+            | $curl_pgw && break
+        n=$((n+1))
+        sleep 2
+        echo "retrying POSTing to prometheus push gateway..."
+    done
+
     echo -e "# TYPE wrk2_benchmark_progress counter\nwrk2_benchmark_progress 0" \
         | $curl_pgw
 
@@ -471,8 +483,8 @@ awk '
     # Call count of URLs
     /URL call count/ {
         call_count=1
-    } 
-    
+    }
+
     END {
         print "# TYPE wrk2_benchmark_url_call_count counter"
         for (url in url_call_count)
