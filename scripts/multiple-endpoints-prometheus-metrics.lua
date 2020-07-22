@@ -96,6 +96,8 @@ function setup(thread)
             global_endpoints[i][5] = e
             prev_endpoint = global_endpoints[i]
         end
+        input_endpoints=nil
+        collectgarbage()
     end
 
     for i, ep in pairs(global_endpoints) do
@@ -175,6 +177,9 @@ function init(args)
         endpoints[i][5] = e
     end
 
+    input_endpoints=nil
+    collectgarbage()
+
     -- initialize idx, assign req and addr
     idx = 0
     wrk.thread.addr = endpoints[idx][0]
@@ -226,6 +231,7 @@ function response(status, headers)
         prev_reconnects = reconnects
         prev_msec = now_msec
         prev_call_count = responses
+        collectgarbage()
    end
 end
 
