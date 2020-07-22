@@ -502,12 +502,16 @@ awk '
  | $curl_pgw
 
 
-# Retry killing linkerd2-proxy
+# gracefully shut down istio/linkerd sidecar if one exists
+sidecar=$(ps ax  | grep -v grep | grep -oE '(linkerd2-proxy|pilot-agent)')
+[ -z "$sidecar" ] && exit 0
+
 grace_max=10
 grace="$grace_max"
 while true; do
-    pkill linkerd2-proxy
+    pkill "$sidecar"
     if [ $? -eq 0 ]; then
+        echo "Sent SIGTERM to $sidecar"
         sleep 1
         grace="$grace_max"
         continue
@@ -515,7 +519,7 @@ while true; do
 
     if [ $grace -gt 0 ]; then
         sleep 1
-        echo "Linkerd-proxy shutdown grace period: $grace"
+        echo "Proxy $sidecar shutdown grace period: $grace"
         grace=$(($grace-1))
         continue
     fi
@@ -523,7 +527,7 @@ while true; do
 done
 
 # Rule #2: Double Tap
-pkill -9 linkerd2-proxy
+pkill -9 "$sidecar"
 
 # exit successfully
 true
