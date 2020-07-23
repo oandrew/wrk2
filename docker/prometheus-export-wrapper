@@ -58,10 +58,10 @@ if [ "$pgw" = "stdout" ] ; then
 elif [ "$pgw" = "null" ] ; then
     curl_pgw="true"
 else
-    # check if gateway is available
-    curl_pgw="curl -s --data-binary @- $pgw"
+    # Add RPS to URL
+    curl_pgw="curl -s --data-binary @- $pgw/rps/$rps"
 
-    # Retry reaching to Pushgateway
+    # check if gateway is available, retry a few times
     n=0
     until [ "$n" -ge 10 ]
     do
@@ -256,12 +256,10 @@ EOF
 # TYPE wrk2_benchmark_current_tcp_reconnect_rate gauge
 # TYPE wrk2_benchmark_rgauge
 # TYPE wrk2_benchmark_progress counter
-# TYPE wrk2_benchmark_requested_rps gauge
 # TYPE wrk2_benchmark_thread_count counter
 # TYPE wrk2_benchmark_duration counter
 wrk2_benchmark_progress{status="init"} 100
 wrk2_benchmark_progress{status="run"} $progress
-wrk2_benchmark_requested_rps $req_rps
 wrk2_benchmark_thread_count $num_threads
 wrk2_benchmark_duration $duration
 $(cat thread-*_seq-${iter}.txt | grep -v 'wrk2_benchmark_run_')
@@ -351,7 +349,6 @@ cat << EOF | $curl_pgw
 # TYPE wrk2_benchmark_current_rps gauge
 # TYPE wrk2_benchmark_average_tcp_reconnect_rate gauge
 # TYPE wrk2_benchmark_current_tcp_reconnect_rate gauge
-# TYPE wrk2_benchmark_requested_rps gauge
 # TYPE wrk2_benchmark_duration counter
 # TYPE wrk2_benchmark_node_cpuclock gauge
 wrk2_benchmark_node_cpuclock{kind="current"} 0
@@ -370,7 +367,6 @@ wrk2_benchmark_node_meminfo{kind="used"} 0
 # TYPE wrk2_benchmark_node_swapinfo gauge
 wrk2_benchmark_node_swapinfo{kind="used"} 0
 $(echo -e $per_thread_info)
-wrk2_benchmark_requested_rps 0
 wrk2_benchmark_duration 0
 
 # TYPE wrk2_benchmark_run_requested_rps gauge
