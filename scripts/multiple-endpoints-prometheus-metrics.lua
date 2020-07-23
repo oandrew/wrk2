@@ -118,7 +118,7 @@ end
 
 function prom(mname, value)
     return string.format(
-                   "wrk2_benchmark_%s{thread=\"thread-%s\"} %d\n",mname,id,value)
+                   "wrk2_benchmark_%s{thread=\"thread-%s\"} %f\n",mname,id,value)
 end
 
 function busysleep(microseconds)
