@@ -80,7 +80,7 @@ function setup(thread)
                     if not addr then
                         print(string.format(
                             "Thread %d Error: Failed to connect to %s:%d",
-                            id, host, port))
+                            counter, host, port))
                         os.exit(2)
                     end
             end
