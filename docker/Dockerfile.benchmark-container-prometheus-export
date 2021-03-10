@@ -1,4 +1,8 @@
-FROM alpine as builder
+# Leave empty for x86, set to e.g. "arm64v8/" (note closing slash!) for ARM, e,g, 
+# $ docker build --build-arg ARCH="arm64v8/" -t wrk2-arm -f docker/Dockerfile.benchmark-container-prometheus-export .
+ARG ARCH=""
+
+FROM ${ARCH}alpine as builder
 MAINTAINER Kinvolk
 
 WORKDIR /usr/src
@@ -12,7 +16,7 @@ RUN cd wrk2-cache-stresser && \
 
 
 
-FROM alpine
+FROM ${ARCH}alpine
 MAINTAINER Kinvolk
 
 RUN apk add --update --no-cache expect curl util-linux \
