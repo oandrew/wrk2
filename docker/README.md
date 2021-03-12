@@ -18,6 +18,22 @@ e.g.
 $ docker build -t cache-stresser -f docker/Dockerfile.cache-stresser .
 ```
 
+## wrk2 with Prometheus stats export
+
+A tiny Docker image based on Alpine which can export both run-time metrics (current RPS, resource usage) and result metrics (overall RPS, latency histogramm).  The container image wraps `wrk2` into `prometheus-export-wrapper`, emitting metrics to a prometheus [push-gateway](https://github.com/prometheus/pushgateway).
+The image can be built for (at least) both x86_64 (the default) and ARM64.
+
+For x86 simply use
+```shell
+$ docker build -t wrk2 -f docker/Dockerfile.benchmark-container-prometheus-export .
+```
+
+and for ARM64 use
+```shell
+$ docker build --build-arg ARCH="arm64v8/" -t wrk2-arm -f docker/Dockerfile.benchmark-container-prometheus-export .
+```
+
+
 ## Cache-stresser
 A tiny Docker image based on Alpine for stressing CDN / cache servers.
 
