@@ -118,86 +118,13 @@ sleep 1
 # I/O to prevent threads being stuck in IOWAIT
 cd /tmpfs
 
-
 # ---------------------
-
-get_cpuinfo() {
-    lscpu \
-        | awk '
-           /Thread\(s\) per core:/ {tps=$4}
-           /Core\(s\) per socket:/ {c=$4}
-           /Socket\(s\):/ {s=$2}
-           END{
-            print "# TYPE wrk2_benchmark_node_cpuinfo gauge"
-            print "wrk2_benchmark_node_cpuinfo{info=\"cores\"} " c*s
-            print "wrk2_benchmark_node_cpuinfo{info=\"threads\"} " c*s*tps
-           }'
-}
-# --
-
-get_cpuclock() {
-    lscpu \
-        | awk '
-            /CPU MHz:/{curr=$3}
-            /CPU max MHz:/{max=$4}
-            END{
-            print "# TYPE wrk2_benchmark_node_cpuclock gauge"
-            print "wrk2_benchmark_node_cpuclock{kind=\"current\"} " curr
-            print "wrk2_benchmark_node_cpuclock{kind=\"max\"} " max }'
-}
-# --
-
-get_loadavg() {
-    local cores="$1"
-    local threads="$2"
-    uptime \
-        | awk -v cores="$cores" -v threads="$threads" ' {
-            load=gensub( /.*load average: ([0-9.]+), ([0-9.]+), ([0-9.]+)/ ,"\\1 \\2 \\3", "g")
-            split(load, al, " ")
-            print "# TYPE wrk2_benchmark_node_loadavg gauge"
-            print "wrk2_benchmark_node_loadavg{interval=\"1m\",kind=\"raw\"} " al[1]
-            print "wrk2_benchmark_node_loadavg{interval=\"5m\",kind=\"raw\"} " al[2]
-            print "wrk2_benchmark_node_loadavg{interval=\"15m\",kind=\"raw\"} " al[3]
-            print "wrk2_benchmark_node_loadavg{interval=\"1m\",kind=\"per_core\"} " (al[1] + 0.0) / (cores + 0.0)
-            print "wrk2_benchmark_node_loadavg{interval=\"5m\",kind=\"per_core\"} " (al[2] + 0.0) / (cores + 0.0)
-            print "wrk2_benchmark_node_loadavg{interval=\"15m\",kind=\"per_core\"} " (al[3] + 0.0) / (cores + 0.0)
-            print "wrk2_benchmark_node_loadavg{interval=\"1m\",kind=\"per_thread\"} " (al[1] + 0.0) / (threads + 0.0)
-            print "wrk2_benchmark_node_loadavg{interval=\"5m\",kind=\"per_thread\"} " (al[2] + 0.0) / (threads + 0.0)
-            print "wrk2_benchmark_node_loadavg{interval=\"15m\",kind=\"per_thread\"} " (al[3] + 0.0) / (threads + 0.0) }'
-}
-# --
-
-get_meminfo() {
-    free \
-        | awk ' /^Mem:/{
-            print "# TYPE wrk2_benchmark_node_meminfo gauge"
-            print "wrk2_benchmark_node_meminfo{kind=\"total\"} " $2
-            print "wrk2_benchmark_node_meminfo{kind=\"used\"} " $3
-            print "wrk2_benchmark_node_meminfo{kind=\"free\"} " $4
-            print "wrk2_benchmark_node_meminfo{kind=\"shared\"} " $5
-            print "wrk2_benchmark_node_meminfo{kind=\"cache\"} " $6
-            print "wrk2_benchmark_node_meminfo{kind=\"available\"} " $7 }
-                /^Swap:/{
-            print "# TYPE wrk2_benchmark_node_swapinfo gauge"
-            print "wrk2_benchmark_node_swapinfo{kind=\"total\"} " $2
-            print "wrk2_benchmark_node_swapinfo{kind=\"used\"} " $3
-            print "wrk2_benchmark_node_swapinfo{kind=\"free\"} " $4 }'
-}
-# --
 
 prometheus_pusher() {
     local num_threads="$1"
     local req_rps="$2"
     local duration="$3"
     local curl_pgw="$4"
-
-    local cpuinfo=$(get_cpuinfo)
-    local threads=$(get_cpuinfo | grep '{info="threads"}' | sed 's/.*} //')
-    local cores=$(get_cpuinfo | grep '{info="cores"}' | sed 's/.*} //')
-
-    local cpuclock=$(get_cpuclock)
-    local loadavg=$(get_loadavg "$cores" "$threads")
-    local meminfo=$(get_meminfo)
 
     local iter=0
     local init=1
@@ -207,19 +134,6 @@ prometheus_pusher() {
 
     while [ ! -f "benchmark-end.txt" ] ; do
         now=$(date +%s)
-        # update load stats every 10s
-        if [ $(($now - $last_load_report)) -ge 10 ] ; then
-            cpuclock=$(get_cpuclock)
-            loadavg=$(get_loadavg "$cores" "$threads")
-            meminfo=$(get_meminfo)
-            cat << EOF | $curl_pgw
-${cpuinfo}
-${cpuclock}
-${loadavg}
-${meminfo}
-EOF
-            last_load_report=$now
-        fi
 
         mcount=$(ls -1 thread-*_seq-${iter}.txt 2>/dev/null | wc -l)
 
@@ -360,22 +274,6 @@ cat << EOF | $curl_pgw
 # TYPE wrk2_benchmark_average_tcp_reconnect_rate gauge
 # TYPE wrk2_benchmark_current_tcp_reconnect_rate gauge
 # TYPE wrk2_benchmark_duration counter
-# TYPE wrk2_benchmark_node_cpuclock gauge
-wrk2_benchmark_node_cpuclock{kind="current"} 0
-# TYPE wrk2_benchmark_node_loadavg gauge
-wrk2_benchmark_node_loadavg{interval="1m",kind="raw"} 0
-wrk2_benchmark_node_loadavg{interval="5m",kind="raw"} 0
-wrk2_benchmark_node_loadavg{interval="15m",kind="raw"} 0
-wrk2_benchmark_node_loadavg{interval="1m",kind="per_core"} 0
-wrk2_benchmark_node_loadavg{interval="5m",kind="per_core"} 0
-wrk2_benchmark_node_loadavg{interval="15m",kind="per_core"} 0
-wrk2_benchmark_node_loadavg{interval="1m",kind="per_thread"} 0
-wrk2_benchmark_node_loadavg{interval="5m",kind="per_thread"} 0
-wrk2_benchmark_node_loadavg{interval="15m",kind="per_thread"} 0
-# TYPE wrk2_benchmark_node_meminfo gauge
-wrk2_benchmark_node_meminfo{kind="used"} 0
-# TYPE wrk2_benchmark_node_swapinfo gauge
-wrk2_benchmark_node_swapinfo{kind="used"} 0
 $(echo -e $per_thread_info)
 wrk2_benchmark_duration 0
 
