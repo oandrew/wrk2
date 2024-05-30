@@ -2,10 +2,12 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 #include "script.h"
 #include "http_parser.h"
 #include "stats.h"
 #include "zmalloc.h"
+#include "bytecode.h"
 
 typedef struct {
     char *name;
@@ -48,8 +50,7 @@ static const struct luaL_Reg threadlib[] = {
 lua_State *script_create(char *file, char *url, char **headers) {
     lua_State *L = luaL_newstate();
     luaL_openlibs(L);
-    (void) luaL_dostring(L, "wrk = require \"wrk\"");
-
+    luaL_loadbuffer(L, luaJIT_BC_wrk, luaJIT_BC_wrk_SIZE, "wrk") || lua_pcall(L, 0, 0, 0);
     luaL_newmetatable(L, "wrk.addr");
     luaL_register(L, NULL, addrlib);
     luaL_newmetatable(L, "wrk.stats");

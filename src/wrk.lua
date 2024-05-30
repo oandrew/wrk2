@@ -1,4 +1,4 @@
-local wrk = {
+wrk = {
    scheme  = "http",
    host    = "localhost",
    port    = nil,
@@ -70,5 +70,3 @@ function wrk.format(method, path, headers, body)
 
    return table.concat(s, "\r\n")
 end
-
-return wrk

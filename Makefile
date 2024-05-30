@@ -1,5 +1,5 @@
 CFLAGS  := -std=c99 -Wall -O2 -D_REENTRANT
-LIBS    := -lpthread -lm -lcrypto -lssl
+LIBS    := -lpthread -lm
 
 TARGET  := $(shell uname -s | tr '[A-Z]' '[a-z]' 2>/dev/null || echo unknown)
 
@@ -9,10 +9,9 @@ ifeq ($(TARGET), sunos)
 else ifeq ($(TARGET), darwin)
 	# Per https://luajit.org/install.html: If MACOSX_DEPLOYMENT_TARGET
 	# is not set then it's forced to 10.4, which breaks compile on Mojave.
-	export MACOSX_DEPLOYMENT_TARGET = $(shell sw_vers -productVersion)
-	LDFLAGS += -pagezero_size 10000 -image_base 100000000
-	LIBS += -L/usr/local/opt/openssl/lib
-	CFLAGS += -I/usr/local/include -I/usr/local/opt/openssl/include
+	# export MACOSX_DEPLOYMENT_TARGET = $(shell sw_vers -productVersion)
+	LIBS += $(shell pkg-config --libs openssl)
+	CFLAGS += $(shell pkg-config --cflags openssl)
 else ifeq ($(TARGET), linux)
         CFLAGS  += -D_POSIX_C_SOURCE=200809L -D_BSD_SOURCE
 	LIBS    += -ldl
@@ -21,13 +20,14 @@ else ifeq ($(TARGET), freebsd)
 	CFLAGS  += -D_DECLARE_C99_LDBL_MATH
 	LDFLAGS += -Wl,-E
 endif
+$(info $(CFLAGS))
 
 SRC  := wrk.c net.c ssl.c aprintf.c stats.c script.c units.c \
 		ae.c zmalloc.c http_parser.c tinymt64.c hdr_histogram.c
 BIN  := wrk
 
 ODIR := obj
-OBJ  := $(patsubst %.c,$(ODIR)/%.o,$(SRC)) $(ODIR)/bytecode.o
+OBJ  := $(patsubst %.c,$(ODIR)/%.o,$(SRC))
 
 LDIR     = deps/luajit/src
 LIBS    := -lluajit $(LIBS)
@@ -49,9 +49,11 @@ $(OBJ): config.h Makefile $(LDIR)/libluajit.a | $(ODIR)
 $(ODIR):
 	@mkdir -p $@
 
-$(ODIR)/bytecode.o: src/wrk.lua
+src/bytecode.h: src/wrk.lua
 	@echo LUAJIT $<
 	@$(SHELL) -c 'cd $(LDIR) && ./luajit -b $(CURDIR)/$< $(CURDIR)/$@'
+
+$(ODIR)/script.o: src/bytecode.h
 
 $(ODIR)/%.o : %.c
 	@echo CC $<
